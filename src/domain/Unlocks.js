@@ -103,15 +103,58 @@ export function isUnlocked(career, role) {
  * money, because the work is the part the player controls minute to minute -
  * money follows from it.
  */
-export function nextDepartment(career = {}, staffedRoles = []) {
+export function nextDepartment(career = {}, staffedRoles = [], options = {}) {
   const staffed = new Set(staffedRoles);
+  /**
+   * ONLY DEPARTMENTS THE PLAYER'S RANK COULD ACTUALLY EMPLOY.
+   *
+   * THE BUG THIS FIXES, found while auditing the goals after the operator's
+   * playtest: this ranked departments purely by how far along their WORK
+   * counter was, and ignored rank entirely. Measured with a probe - a rank-1
+   * player who has answered six phones is told "Open reservations", a
+   * department no rank below 4 may employ. The goal line is the game's only
+   * instruction about what to do next, so that is an instruction leading
+   * nowhere, and day 5 hands the player phone calls BY DESIGN, so the arc
+   * itself triggers it.
+   *
+   * This is the same defect `Progression.unlocksAt` was written to fix on the
+   * staff screen - "a rank-1 player was told a Head receptionist could employ a
+   * reservations manager" - reappearing in a second place. Which is the
+   * argument for `employable` being passed in rather than recomputed: the
+   * caller already knows the rank, and this module stays dependency-free.
+   *
+   * Omitted means no filter, so every existing caller and test behaves as it did.
+   */
+  const employable = options.employable ? new Set(options.employable) : null;
   let best = null;
   for (const role of Object.keys(DEPARTMENT_GOALS)) {
     if (staffed.has(role)) continue;
+    if (employable && !employable.has(role)) continue;
     const progress = unlockProgress(career, role);
     const goal = progress.goal;
     const share = Math.min(1, (career[goal.counter] ?? 0) / goal.need);
     if (!best || share > best.share) best = { role, share, ...progress };
   }
   return best;
+}
+
+/**
+ * How far along this department is, as ONE number, bound by whichever half is
+ * furthest behind.
+ *
+ * THE BUG THIS FIXES. The floor's goal bar was drawn from the WORK gap alone,
+ * and a gap that is MET is simply absent from the list - so once the player had
+ * done the ten check-ins, the bar jumped to 100% and stayed there while the
+ * money half was still short. The operator saw exactly that: a full bar, and
+ * "$16 more profit" underneath it, with nothing moving. A bar that reads done
+ * on an unmet goal is worse than no bar.
+ *
+ * Both halves have to be met, so the honest single number is the minimum.
+ */
+export function unlockShare(career = {}, role) {
+  const goal = DEPARTMENT_GOALS[role];
+  if (!goal) return 1;
+  const work = Math.min(1, Math.max(0, career[goal.counter] ?? 0) / Math.max(1, goal.need));
+  const money = Math.min(1, Math.max(0, career.profit ?? 0) / Math.max(1, goal.profit));
+  return Math.min(work, money);
 }

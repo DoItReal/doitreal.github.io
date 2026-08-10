@@ -30,7 +30,8 @@ import {
   buildProgress, buildRemainingSeconds, certification, createProperty, deserialize,
   REMOTE_TRAINING_MULTIPLIER, TRAINING, availableRoster, devFinishAll, devGrant, devRewind,
   devSeedDays, hire, hireBlocker, lockedDepartments, menuBand, menuPrice, openPositions,
-  recordWork, unlockProgress, nextDepartment, recruitmentFee, withRank,
+  recordWork, unlockProgress, nextDepartment, unlockShare, DEPARTMENT_GOALS,
+  recruitmentFee, withRank,
   setMenuPrice, staffCount,
   findStaff, maintenanceSpeedUpSeconds, open as openProperty, resume, roomsUnderConstruction,
   houseOf, describeHouse,
@@ -41,7 +42,7 @@ import {
   awardDay, rankOf, recordTradingDay, ledgerReport, exportLedger, guestsOn,
 } from "./property.js";
 import {
-  CONDITION_SPEC, FEATURE_SPEC, VIEW_SPEC, LEVELS, reveals,
+  CONDITION_SPEC, FEATURE_SPEC, VIEW_SPEC, LEVELS, reveals, staffCap,
 } from "./domain/index.js";
 import { UPSELL_POLICY } from "./engine.js";
 import { inHouseAtOpen } from "./domain/Bookings.js";
@@ -863,14 +864,25 @@ function paintGoal() {
   const career = { ...state.property.career };
   const running = runningProfit();
   if (running > 0) career.profit = (career.profit ?? 0) + running;
-  const department = nextDepartment(career, staffed);
+  /**
+   * ONLY DEPARTMENTS THIS RANK COULD EMPLOY. Without this the line tells a
+   * rank-1 player who has answered a few phones to "Open reservations", which
+   * no rank below 4 may employ - an instruction that leads nowhere, and day 5
+   * hands out phone calls by design. See nextDepartment.
+   */
+  const level = rank.level;
+  const employable = Object.keys(DEPARTMENT_GOALS).filter((role) => staffCap(level, role) > 0);
+  const department = nextDepartment(career, staffed, { employable });
   if (department && !department.met) {
     label.textContent = `Open ${department.role}`;
     need.textContent = department.gaps.map((g) => g.text).join("  -  ");
-    const work = department.gaps.find((g) => g.kind === "work");
-    bar.style.width = `${Math.max(0, Math.min(100, work
-      ? (work.have / work.need) * 100
-      : 100))}%`;
+    /**
+     * BOUND BY WHICHEVER HALF IS FURTHEST BEHIND. This used to read the WORK gap
+     * alone, and a met gap is absent from the list - so the bar hit 100% the
+     * moment the check-ins were done and sat there while the money was still
+     * short. The operator saw a full bar over "$16 more profit". See unlockShare.
+     */
+    bar.style.width = `${Math.max(0, Math.min(100, unlockShare(career, department.role) * 100))}%`;
     return;
   }
   if (department && department.met) {

@@ -51,7 +51,7 @@ import {
   BOOK_HORIZON, fillBook, rollBook, seedOpeningGuests,
 } from "./domain/Bookings.js";
 import {
-  DEPARTMENT_GOALS, emptyCareer, isUnlocked, nextDepartment, unlockProgress,
+  DEPARTMENT_GOALS, emptyCareer, isUnlocked, nextDepartment, unlockProgress, unlockShare,
 } from "./domain/Unlocks.js";
 
 /* ------------------------------------------------------------- building -- */
@@ -441,7 +441,7 @@ export function openPositions(property) {
  * is no point telling a hotel with no bar that it cannot employ a bartender.
  */
 /** Re-exported so callers have one import for "what opens a department". */
-export { DEPARTMENT_GOALS, unlockProgress, isUnlocked, nextDepartment };
+export { DEPARTMENT_GOALS, unlockProgress, isUnlocked, nextDepartment, unlockShare };
 
 /**
  * Bank experience and the jobs behind it, as they happen. Returns a NEW property.
