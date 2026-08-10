@@ -416,6 +416,11 @@ function shiftOptions(level) {
     // time that is LEFT, not a fresh full one, so the countdown on screen and
     // the clock in the header can never disagree.
     durationSec: Math.max(30, clockOf(state.property).secondsToDayEnd),
+    // ...AND THE HOUR IT IS ALREADY. Without this the shift maps those remaining
+    // seconds across a whole 24 hours and believes its own t=0 is midnight - the
+    // operator's "the clock shows 22:00 and the board says check-in is early for
+    // 14:00". One timeline, two readings. See Schedule.shiftWindow.
+    startHour: clockOf(state.property).hour,
     facilities: state.property.facilities,
     // What each outlet charges per cover. Set on the F&B screen; it survives
     // the day exactly as the room rate does.

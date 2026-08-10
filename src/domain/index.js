@@ -59,6 +59,7 @@ export {
   DAY_START_HOUR, GUARANTEE_HOUR, CHECKOUT_HOURS, ARRIVAL_HOURS, WALK_IN_HOURS,
   NIGHT_PREP_HOURS, EARLY_ARRIVAL_SHARE,
   dayWindow, dayHours, hourSeconds, hourAt, timeOfHour, dayCovers,
+  shiftWindow, shiftHours, shiftCovers,
   arrivalTime, checkoutTime, patienceStartsAt, acceptsWalkIns, isNightShift,
 } from "./Schedule.js";
 

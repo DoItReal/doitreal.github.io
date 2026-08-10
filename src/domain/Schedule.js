@@ -55,30 +55,92 @@ export function dayHours(day) {
   return to - from;
 }
 
-/** Real seconds one in-game hour lasts, on a day of `durationSec`. */
-export function hourSeconds(day, durationSec) {
-  return durationSec / dayHours(day);
+/**
+ * THE SHIFT MAY NOT GET THE WHOLE DAY, AND IT HAS TO KNOW THAT.
+ *
+ * The operator, on the deployed build: "the clock shows 22:00 and there is
+ * check-in it says: 'Check-in early than 14:00 - 2 hours until'. 00:00 is not
+ * 14:00 this is totally wrong. From where does everything gets the time?"
+ *
+ * Two answers, which was the bug. The header reads the property timeline and was
+ * right. The job board read the SHIFT, and the shift was handed the REMAINING
+ * seconds of the day (`clockOf(property).secondsToDayEnd`) while still mapping
+ * its own `elapsed` across the whole day window. Come back at 20:00 and the shift
+ * believed its t=0 was midnight and stretched the last four hours over a full
+ * twenty-four. Every hour derived from it - the 14:00 guarantee, check-out,
+ * walk-ins, night prep, arrivals - was wrong by that offset.
+ *
+ * The fix is not a global clock object. `property.js` and `engine.js` are pure -
+ * `now` is always an argument, never `Date.now()` - and a mutable singleton
+ * holding wall-clock state would break replay determinism, the headless pacing
+ * harness and the offline economy tests. The operator's real complaint was that
+ * there were TWO authorities for "what hour is it". So there is still one, here,
+ * and the shift now carries the hour it STARTED at: its elapsed seconds map onto
+ * [startHour, midnight] instead of [dayStart, midnight].
+ *
+ * `startHour` of null means "the whole day", which is what a cold start on any
+ * day is, and is why every existing caller and test is untouched by this.
+ */
+export function shiftWindow(day, startHour = null) {
+  const { from, to } = dayWindow(day);
+  if (startHour === null || !Number.isFinite(startHour)) return { from, to };
+  return { from: Math.max(from, Math.min(to, startHour)), to };
 }
 
-/** The clock face at `elapsed` seconds into the day. */
-export function hourAt(day, durationSec, elapsed) {
-  const { from } = dayWindow(day);
-  const progress = durationSec > 0 ? Math.max(0, Math.min(1, elapsed / durationSec)) : 0;
-  return from + progress * dayHours(day);
+/** How many in-game hours are left to play from this shift's start. */
+export function shiftHours(day, startHour = null) {
+  const { from, to } = shiftWindow(day, startHour);
+  return Math.max(0, to - from);
 }
 
 /**
- * The moment inside the day at which a given hour falls.
+ * Does this hour still happen inside a shift that began at `startHour`?
  *
- * Returns 0 for an hour that has already passed when the day begins - on day 1,
+ * False means the event is in the PAST - a 09:00 arrival in a shift that opens
+ * at 20:00 already happened, while the player was away, and `advanceTimeline`
+ * has already priced those hours. The caller must DROP it, not clamp it to zero:
+ * `timeOfHour` below clamps, and clamping is exactly how you get a pile of
+ * impossible tasks dumped on the board at t=0.
+ *
+ * The hour is clamped into the DAY first so day 1 keeps behaving as it did:
+ * "06:30" on a day that opens at 08:00 is the start of the day, not a miss.
+ */
+export function shiftCovers(day, hour, startHour = null) {
+  const { from, to } = dayWindow(day);
+  const inDay = Math.max(from, Math.min(to, hour));
+  return inDay >= shiftWindow(day, startHour).from;
+}
+
+/** Real seconds one in-game hour lasts, on a shift of `durationSec`. */
+export function hourSeconds(day, durationSec, startHour = null) {
+  const hours = shiftHours(day, startHour);
+  return hours > 0 ? durationSec / hours : durationSec;
+}
+
+/** The clock face at `elapsed` seconds into the shift. */
+export function hourAt(day, durationSec, elapsed, startHour = null) {
+  const { from } = shiftWindow(day, startHour);
+  const progress = durationSec > 0 ? Math.max(0, Math.min(1, elapsed / durationSec)) : 0;
+  return from + progress * shiftHours(day, startHour);
+}
+
+/**
+ * The moment inside the shift at which a given hour falls.
+ *
+ * Returns 0 for an hour that has already passed when the shift begins - on day 1,
  * which opens at 08:00, "06:30" is simply the start of the day rather than a
  * negative time. That is what makes day 1 safe to schedule against without every
  * caller special-casing it.
+ *
+ * That clamp is a convenience, not a licence: ask `shiftCovers` FIRST if the
+ * answer "this never happens today" is a possible one. See its note.
  */
-export function timeOfHour(day, durationSec, hour) {
-  const { from, to } = dayWindow(day);
+export function timeOfHour(day, durationSec, hour, startHour = null) {
+  const { from, to } = shiftWindow(day, startHour);
+  const hours = shiftHours(day, startHour);
+  if (hours <= 0) return 0;
   const clamped = Math.max(from, Math.min(to, hour));
-  return ((clamped - from) / dayHours(day)) * durationSec;
+  return ((clamped - from) / hours) * durationSec;
 }
 
 /** Is this hour inside the day at all? Day 1 has no small hours. */
@@ -207,20 +269,50 @@ export const OPENING_DAY_FIRST_ARRIVAL_HOUR = 8.33;
  */
 export const EARLY_ARRIVAL_SHARE = 0.25;
 
-export function arrivalTime(index, total, day, durationSec, random) {
+/**
+ * Returns null for an arrival whose hour is already behind a late-starting
+ * shift. Those guests are not lost, they are simply not this shift's: they
+ * turned up while the player was away and the offline path has already priced
+ * them. See `shiftCovers`.
+ */
+export function arrivalTime(index, total, day, durationSec, random, startHour = null) {
   const n = Math.max(1, total);
   const jitter = () => (random() - 0.5) * 6;
-  const at = (hour) => timeOfHour(day, durationSec, hour);
+  const at = (hour) => timeOfHour(day, durationSec, hour, startHour);
+  const covers = (hour) => shiftCovers(day, hour, startHour);
   const early = Math.max(1, Math.round(n * EARLY_ARRIVAL_SHARE));
 
   // The first guest the hotel ever has is on the step, not in a distribution.
   // See OPENING_DAY_FIRST_ARRIVAL_HOUR. No jitter: this one is a scripted beat.
-  if (day === 1 && index === 0) return at(OPENING_DAY_FIRST_ARRIVAL_HOUR);
+  if (day === 1 && index === 0) {
+    return covers(OPENING_DAY_FIRST_ARRIVAL_HOUR) ? at(OPENING_DAY_FIRST_ARRIVAL_HOUR) : null;
+  }
+
+  /**
+   * The nominal hour an arrival is spread to, before jitter. On a whole-day
+   * shift `at(nominal)` and `from + share * width` are the same number, but only
+   * algebraically - the seconds form is kept for the default path so the pacing
+   * baseline stays bit-identical. A late shift has to go through the HOUR,
+   * because `at()` clamps everything before the start to 0 and would otherwise
+   * squash the surviving guests toward the opening second.
+   */
+  const wholeDay = shiftWindow(day, startHour).from === dayWindow(day).from;
+  const spread = (fromHour, toHour, share) => {
+    const nominal = fromHour + (toHour - fromHour) * share;
+    if (!covers(nominal)) return null;
+    return wholeDay ? undefined : at(nominal);
+  };
 
   if (index < early) {
     const from = at(ARRIVAL_HOURS.earliest);
     const width = at(ARRIVAL_HOURS.guarantee) - from;
-    return Math.max(0, from + (index * width) / early + jitter());
+    // Drawn before the coverage test so the seeded stream is identical whether
+    // or not this arrival lands in the shift. Determinism is not negotiable.
+    const j = jitter();
+    const exact = spread(ARRIVAL_HOURS.earliest, ARRIVAL_HOURS.guarantee, index / early);
+    if (exact === null) return null;
+    if (exact !== undefined) return Math.max(0, exact + j);
+    return Math.max(0, from + (index * width) / early + j);
   }
   /**
    * Divided by `after`, not `after - 1`. Pushing the last arrival all the way to
@@ -232,30 +324,45 @@ export function arrivalTime(index, total, day, durationSec, random) {
   const from = at(ARRIVAL_HOURS.guarantee);
   const width = Math.max(0, at(ARRIVAL_HOURS.latest) - from);
   const after = n - early;
-  return Math.max(from, from + ((index - early) * width) / Math.max(1, after) + jitter());
+  const j = jitter();
+  const exact = spread(
+    ARRIVAL_HOURS.guarantee, ARRIVAL_HOURS.latest, (index - early) / Math.max(1, after),
+  );
+  if (exact === null) return null;
+  if (exact !== undefined) return Math.max(0, exact + j);
+  return Math.max(from, from + ((index - early) * width) / Math.max(1, after) + j);
 }
 
-/** When a departing guest comes down to settle. See CHECKOUT_HOURS. */
-export function checkoutTime(day, durationSec, random) {
-  const from = timeOfHour(day, durationSec, CHECKOUT_HOURS.from);
-  const to = timeOfHour(day, durationSec, CHECKOUT_HOURS.to);
-  return from + random() * Math.max(0, to - from);
+/**
+ * When a departing guest comes down to settle. See CHECKOUT_HOURS.
+ *
+ * Null when the whole check-out window is behind a late-starting shift: a shift
+ * that opens at 20:00 has no departures left to take, because they left at noon.
+ */
+export function checkoutTime(day, durationSec, random, startHour = null) {
+  const roll = random();
+  if (!shiftCovers(day, CHECKOUT_HOURS.to, startHour)) return null;
+  const from = timeOfHour(day, durationSec, CHECKOUT_HOURS.from, startHour);
+  const to = timeOfHour(day, durationSec, CHECKOUT_HOURS.to, startHour);
+  return from + roll * Math.max(0, to - from);
 }
 
 /** When this guest's patience starts running - never before the guarantee. */
-export function patienceStartsAt(day, durationSec, arrivedAt) {
-  return Math.max(arrivedAt, timeOfHour(day, durationSec, GUARANTEE_HOUR));
+export function patienceStartsAt(day, durationSec, arrivedAt, startHour = null) {
+  // On a shift that opens after 14:00 this clamps to 0, which is right: the
+  // promise is already due, so the hotel is late from the moment they walk in.
+  return Math.max(arrivedAt, timeOfHour(day, durationSec, GUARANTEE_HOUR, startHour));
 }
 
 /** Is the desk inside its walk-in hours right now? */
-export function acceptsWalkIns(day, durationSec, elapsed) {
-  const hour = hourAt(day, durationSec, elapsed);
+export function acceptsWalkIns(day, durationSec, elapsed, startHour = null) {
+  const hour = hourAt(day, durationSec, elapsed, startHour);
   return hour >= WALK_IN_HOURS.from && hour < WALK_IN_HOURS.to;
 }
 
 /** Is the desk inside the night shift right now? */
-export function isNightShift(day, durationSec, elapsed) {
-  const hour = hourAt(day, durationSec, elapsed);
+export function isNightShift(day, durationSec, elapsed, startHour = null) {
+  const hour = hourAt(day, durationSec, elapsed, startHour);
   return hour >= NIGHT_PREP_HOURS.from && hour < NIGHT_PREP_HOURS.to;
 }
 
@@ -264,16 +371,16 @@ export function isNightShift(day, durationSec, elapsed) {
  * See OPENING_PREP_HOURS. Day 1 only; every other day preps at night, for the
  * morning after.
  */
-export function isOpeningPrep(day, durationSec, elapsed) {
+export function isOpeningPrep(day, durationSec, elapsed, startHour = null) {
   if (day !== 1) return false;
-  const hour = hourAt(day, durationSec, elapsed);
+  const hour = hourAt(day, durationSec, elapsed, startHour);
   return hour >= OPENING_PREP_HOURS.from && hour < OPENING_PREP_HOURS.to;
 }
 
 /** Is the desk doing preparation work of either kind right now? */
-export function isPrepTime(day, durationSec, elapsed) {
-  return isNightShift(day, durationSec, elapsed)
-    || isOpeningPrep(day, durationSec, elapsed);
+export function isPrepTime(day, durationSec, elapsed, startHour = null) {
+  return isNightShift(day, durationSec, elapsed, startHour)
+    || isOpeningPrep(day, durationSec, elapsed, startHour);
 }
 
 /** The window preparation runs in on this day, in hours. */

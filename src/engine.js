@@ -1659,21 +1659,34 @@ export const WAIT_LADDER = {
  */
 export function shiftDay(shift) { return shift.today ?? 1; }
 
+/**
+ * THE HOUR THIS SHIFT OPENED AT. Null means "at the start of its day", which is
+ * every cold start; a resumed day carries the hour the property clock was
+ * actually at. See `shiftWindow` in Schedule.js for the bug this closes.
+ */
+export function shiftStartHour(shift) { return shift.startHour ?? null; }
+
 /** The clock face inside this shift right now. */
 export function hourAtShift(shift) {
-  return scheduleHourAt(shiftDay(shift), shift.config.durationSec, shift.time);
+  return scheduleHourAt(
+    shiftDay(shift), shift.config.durationSec, shift.time, shiftStartHour(shift),
+  );
 }
 
 export function hourSeconds(shift) {
-  return scheduleHour(shiftDay(shift), shift.config.durationSec);
+  return scheduleHour(shiftDay(shift), shift.config.durationSec, shiftStartHour(shift));
 }
 
 export function timeOfHour(shift, hour) {
-  return scheduleTimeOfHour(shiftDay(shift), shift.config.durationSec, hour);
+  return scheduleTimeOfHour(
+    shiftDay(shift), shift.config.durationSec, hour, shiftStartHour(shift),
+  );
 }
 
 export function patienceStartsAt(shift, arrivedAt) {
-  return schedulePatience(shiftDay(shift), shift.config.durationSec, arrivedAt);
+  return schedulePatience(
+    shiftDay(shift), shift.config.durationSec, arrivedAt, shiftStartHour(shift),
+  );
 }
 
 /** Whether this day teaches the wait ladder at all. Day 1 does not - see ONBOARDING_DAYS. */
@@ -1704,6 +1717,13 @@ export function createShift(level, seed, options = {}) {
    * day after runs midnight to midnight. See Schedule.js.
    */
   const today = options.today ?? 1;
+  /**
+   * THE HOUR THE DAY IS ALREADY AT when this shift opens. Null - the default,
+   * and every cold start - means the shift gets the whole day, which is what
+   * every existing caller and test assumes. `game.js` passes the property
+   * clock's hour when it resumes a day mid-way. See Schedule.shiftWindow.
+   */
+  const startHour = Number.isFinite(options.startHour) ? options.startHour : null;
   const durationSec = Math.max(30, Math.round(options.durationSec ?? base.durationSec));
   const stretch = durationSec / base.durationSec;
   const config = {
@@ -1787,11 +1807,24 @@ export function createShift(level, seed, options = {}) {
    * every existing test working.
    */
   const booked = Array.isArray(options.arrivals) ? options.arrivals : null;
+  /**
+   * AN ARRIVAL WHOSE HOUR HAS ALREADY PASSED IS NOT THIS SHIFT'S.
+   *
+   * `arrivalTime` returns null for a 09:00 guest in a shift that opens at 20:00.
+   * They are not dropped on the floor - they turned up while the player was away
+   * and `advanceTimeline` has already priced those hours. What must NOT happen is
+   * pushing them with a null `dueAt`: `next.time < null` is false, so every one
+   * of them would land on the board at t=0. That is the whole failure mode.
+   */
+  const push = (reservation) => {
+    if (reservation.dueAt === null) return;
+    reservations.push(reservation);
+  };
   if (booked) {
     booked.forEach((arrival, i) => {
-      reservations.push({
+      push({
         id: arrival.id ?? i + 1,
-        dueAt: arrivalTime(i, booked.length, today, config.durationSec, random),
+        dueAt: arrivalTime(i, booked.length, today, config.durationSec, random, startHour),
         source: "book",
         nights: arrival.nights ?? 1,
         guests: arrival.guests ?? 2,
@@ -1804,9 +1837,9 @@ export function createShift(level, seed, options = {}) {
     });
   } else {
     for (let i = 0; i < bookings; i += 1) {
-      reservations.push({
+      push({
         id: i + 1,
-        dueAt: arrivalTime(i, bookings, today, config.durationSec, random),
+        dueAt: arrivalTime(i, bookings, today, config.durationSec, random, startHour),
         source: "book",
         nights: pickWeighted(scratch, NIGHT_MIX).nights,
         guests: pickWeighted(scratch, PARTY_MIX).guests,
@@ -1824,6 +1857,11 @@ export function createShift(level, seed, options = {}) {
     level, seed, config,
     /** The day on the timeline this shift is. Schedule.js needs it. */
     today,
+    /**
+     * The hour this shift opened at, null for the whole day. Schedule.js needs
+     * it too, and without it the board's clock and the header's disagree.
+     */
+    startHour,
     stars, certification, facilities,
     /**
      * What the player charges per cover in each outlet, keyed by FACILITY. An
@@ -1897,7 +1935,9 @@ export function createShift(level, seed, options = {}) {
          */
         checkoutAt: occupied
           && (!resident || resident.departureDay <= (options.today ?? 0))
-          ? checkoutTime(today, config.durationSec, random) : null,
+          // Null when the shift opens after 12:00 - those guests settled and
+          // left hours ago. `checkoutAt === null` is already "no departure".
+          ? checkoutTime(today, config.durationSec, random, startHour) : null,
       };
     }),
     reservations,
@@ -2448,7 +2488,9 @@ function completeTask(shift, task, worker) {
    * is deliberately NOT also banked for tomorrow - one prep, one check-in.
    */
   if (task.type === TASK.PREP) {
-    if (isOpeningPrep(shiftDay(shift), shift.config.durationSec, shift.time)) {
+    if (isOpeningPrep(
+      shiftDay(shift), shift.config.durationSec, shift.time, shiftStartHour(shift),
+    )) {
       shift.preppedFor = (shift.preppedFor ?? 0) + 1;
     } else {
       shift.prepDone += 1;
@@ -2740,7 +2782,9 @@ export function tick(shift, dt) {
     const day = shiftDay(next);
     const spawned = next.tasks.filter((t) => t.type === TASK.PREP).length;
     const wanted = prepJobs(next);
-    if (isPrepTime(day, next.config.durationSec, next.time) && spawned < wanted) {
+    if (isPrepTime(
+      day, next.config.durationSec, next.time, shiftStartHour(next),
+    ) && spawned < wanted) {
       const window = prepWindow(day);
       const slot = (window.to - window.from) / wanted;
       const dueBy = window.from + slot * spawned;
@@ -2800,7 +2844,9 @@ export function tick(shift, dt) {
    * and 08:00 this is not okay." See WALK_IN_HOURS in Schedule.js.
    */
   if (next.time < next.config.durationSec
-    && acceptsWalkIns(shiftDay(next), next.config.durationSec, next.time)
+    && acceptsWalkIns(
+      shiftDay(next), next.config.durationSec, next.time, shiftStartHour(next),
+    )
     && nextRandom(next) < next.config.walkInChance * dt * 0.25) {
     if (roomsAvailable(next) > outstandingBookings(next)) {
       // Walk-ins are the genuine one-nighters, and there are few of them.
