@@ -22,7 +22,7 @@ import {
   levelConfig, outletBrigade, outletCapacity, outstandingBookings, roleWage,
   roomsAvailable, score, startTask, suggestTask, takeOver,
   taskBoard, taskSeconds, taskUrgency, tick,
-  hourSeconds, WAIT_LADDER,
+  hourSeconds, WAIT_LADDER, addStaffToShift,
 } from "./engine.js";
 import {
   BUILD_CATALOG, BUILD_KIND, OFFLINE_CAP_SECONDS, REFURB, ROOM as BUILD_ROOM,
@@ -873,6 +873,21 @@ function paintGoal() {
   const level = rank.level;
   const employable = Object.keys(DEPARTMENT_GOALS).filter((role) => staffCap(level, role) > 0);
   const department = nextDepartment(career, staffed, { employable });
+  /**
+   * THE EARNED-BUT-UNTAKEN OFFER IS A NOTE, NOT THE GOAL. See nextDepartment's
+   * skipMet. The player may never want to hire - working every job yourself and
+   * paying nobody is a legitimate way to play - so the line names the next thing
+   * to DO and mentions the standing offer beside it.
+   */
+  const earned = nextDepartment(career, staffed, { employable });
+  const ahead = nextDepartment(career, staffed, { employable, skipMet: true });
+  if (earned && earned.met && ahead) {
+    label.textContent = `Open ${ahead.role}`;
+    need.textContent = `${ahead.gaps.map((g) => g.text).join("  -  ")}`
+      + `   (a ${earned.role} is waiting on the Staff screen whenever you want one)`;
+    bar.style.width = `${Math.max(0, Math.min(100, unlockShare(career, ahead.role) * 100))}%`;
+    return;
+  }
   if (department && !department.met) {
     label.textContent = `Open ${department.role}`;
     need.textContent = department.gaps.map((g) => g.text).join("  -  ");
@@ -1873,6 +1888,8 @@ el("staff-sheet").addEventListener("click", (event) => {
     const blocker = hireBlocker(state.property, role);
     if (blocker) { sound.nope(); toast(blocker); return; }
     state.property = hire(state.property, role);
+    // ON THE FLOOR TODAY, not after the next refresh. See addStaffToShift.
+    if (state.shift && !state.shift.over) state.shift = addStaffToShift(state.shift, { role });
     saveProperty();
     sound.done();
     toast(role === state.property.ownerRole
@@ -2874,6 +2891,9 @@ el("fnb-sheet").addEventListener("click", (event) => {
   const blocker = hireBlocker(state.property, role);
   if (blocker) { sound.nope(); toast(blocker); return; }
   state.property = hire(state.property, role);
+  // Brigade roles work the outlets rather than the board, but they are still
+  // counted from the shift's staff list, so the same rule applies.
+  if (state.shift && !state.shift.over) state.shift = addStaffToShift(state.shift, { role });
   saveProperty();
   sound.done();
   toast(`${role} hired at $${roleWage(role, 1)} a day.`);
@@ -3446,7 +3466,12 @@ el("tut-go").addEventListener("click", () => {
   el("tut-veil").classList.remove("show");
   localStorage.setItem(KEY_TUT, "1");
   analytics.track("tutorial_complete");
-  beginDay();
+  // NOW the hotel opens - see the boot block. `returnToProperty` ends in
+  // `beginDay`, so the day is built against a clock that has not been running
+  // behind the cards.
+  setPaused(false);
+  returnToProperty();
+  render();
 });
 
 window.addEventListener("pagehide", () => {
@@ -3592,18 +3617,39 @@ const bootConfig = levelConfig(state.level);
 state.property = applyCareerBaseline(
   state.property, bootConfig.rooms, bootConfig.hired.map((h) => h.role), bootConfig.role,
 );
-returnToProperty();
 
-render();
-requestAnimationFrame(frame);
-
-if (localStorage.getItem(KEY_TUT)) {
-  beginDay();
-  // startShift unpauses; if the return card is up, the floor waits behind it.
-  if (el("away-veil").classList.contains("show")) setPaused(true);
-} else {
+/**
+ * THE FIRST DAY DOES NOT START UNTIL THE PLAYER CLOSES THE LAST CARD.
+ *
+ * Operator: "when i start when wiped save, the game starts while i still read
+ * the intro text, it must start when i close the last dialog box."
+ *
+ * It was true and the cause was the ORDER here. `returnToProperty` opens the
+ * floor - it ends in `beginDay`, which is right for every other entry into the
+ * game - and boot called it BEFORE putting the intro up. So the day was already
+ * running, and its clock already moving, behind four cards of reading. On a
+ * 150-second day, a minute of reading is a third of it gone.
+ *
+ * So a first run is paused first, shown the cards, and only opens the floor when
+ * the last one is dismissed. `setPaused(true)` before anything else means even
+ * the heartbeat is held - it returns early while paused, and `frame` hands the
+ * whole paused interval back to `lastSeenAt`, so the hotel is not billed for
+ * the time the player spent reading.
+ */
+const firstRun = !localStorage.getItem(KEY_TUT);
+if (firstRun) {
+  setPaused(true);
   introBeat = 0;
   paintIntro();
   el("tut-veil").classList.add("show");
   analytics.track("tutorial_start");
+  render();
+  requestAnimationFrame(frame);
+} else {
+  returnToProperty();
+  render();
+  requestAnimationFrame(frame);
+  beginDay();
+  // startShift unpauses; if the return card is up, the floor waits behind it.
+  if (el("away-veil").classList.contains("show")) setPaused(true);
 }

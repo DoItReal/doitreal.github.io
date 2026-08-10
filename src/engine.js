@@ -1061,6 +1061,34 @@ export function mulberry32(seed) {
  * The career ladder. Each promotion hands one role to staff and hands YOU a new
  * one, so the operation deepens without any single job getting harder.
  */
+/**
+ * EVERY JOB IN THE HOTEL, AND THE OWNER MAY DO ALL OF THEM.
+ *
+ * Operator, after playtest: "The best is if the player has no role at all. He
+ * must be able to fulfill every job. But to hire staff to automate this process.
+ * If he wants he can go to goal 15 without even hiring reception."
+ *
+ * THE BUG THIS FIXES, and it was a dead end the player could not see. Job TYPES
+ * used to be gated by rank: `CLEAN` first appeared at rank 3, `REPAIR` at rank
+ * 4, and `breakChance`/`phoneCalls` were zero below them. Meanwhile housekeeping
+ * is employable from rank 2 and its goal is fifteen cleans - so the game handed
+ * a rank-2 player a goal it then refused to create a single job for. The
+ * operator hit exactly that: "it gave me goal for the housekeeping to turn 15
+ * rooms but i was not in this role so was unable to fulfill it. No matter what i
+ * did, passed hours, days it gave me no housekeeping role."
+ *
+ * The owner has no role. A rank now decides how many people you may EMPLOY and
+ * how much of the simulation is shown - never what you personally may pick up.
+ *
+ * Days 1-5 still introduce the jobs one at a time: that is the teaching arc in
+ * `ONBOARDING_DAYS`, which overrides this and is about the PLAYER learning, not
+ * about permission.
+ */
+export const ALL_JOBS = [
+  TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR,
+  TASK.PHONE, TASK.BED,
+];
+
 export function levelConfig(level) {
   const levels = {
     // Level 1 is deliberately the simplest thing that is still a game: two job
@@ -1071,10 +1099,12 @@ export function levelConfig(level) {
       title: "Receptionist", role: ROLE.RECEPTION,
       subtitle: "1-star hotel. You are the front desk.",
       rooms: 8, durationSec: 115, patienceSec: 34, staySec: 34,
-      startOccupancy: 0.5, reservations: 5, walkInChance: 0.1, phoneCalls: 0,
+      startOccupancy: 0.5, reservations: 5, walkInChance: 0.1, phoneCalls: 2,
       hired: [],
-      tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT],
-      breakChance: 0,
+      tasks: ALL_JOBS,
+      // Non-zero from rank 1: the maintenance goal is eight repairs, and a rank
+      // that never breaks a room is a goal that can never be reached.
+      breakChance: 0.2,
       // Generous on purpose: skilled play scores ~336 here. A first-time player
       // should clear level 1 even while fumbling, or they never see level 2.
       pricingEnabled: false,
@@ -1089,9 +1119,9 @@ export function levelConfig(level) {
       hired: [{ role: ROLE.RECEPTION, tier: 1 }],
       // The phone appears here, but reception answers it: you SEE the job exist
       // before you ever have to do it.
-      tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.PHONE, TASK.ESCORT],
+      tasks: ALL_JOBS,
       escortCarriesBags: true,
-      breakChance: 0,
+      breakChance: 0.25,
       pricingEnabled: false,
       targetProfit: 265, targetSatisfaction: 70,
       unlocks: ROLE.BELLBOY,
@@ -1102,9 +1132,9 @@ export function levelConfig(level) {
       rooms: 12, durationSec: 145, patienceSec: 26, staySec: 42,
       startOccupancy: 0.52, reservations: 7, walkInChance: 0.12, phoneCalls: 3,
       hired: [{ role: ROLE.RECEPTION, tier: 1 }, { role: ROLE.BELLBOY, tier: 1 }],
-      tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.PHONE, TASK.ESCORT, TASK.CLEAN],
+      tasks: ALL_JOBS,
       escortCarriesBags: true,
-      breakChance: 0,
+      breakChance: 0.3,
       pricingEnabled: true,
       targetProfit: 400, targetSatisfaction: 75,
       unlocks: ROLE.HOUSEKEEPING,
@@ -1116,7 +1146,7 @@ export function levelConfig(level) {
       startOccupancy: 0.62, reservations: 12, walkInChance: 0.12, phoneCalls: 4,
       hired: [{ role: ROLE.RECEPTION, tier: 1 }, { role: ROLE.BELLBOY, tier: 1 },
               { role: ROLE.HOUSEKEEPING, tier: 1 }],
-      tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.PHONE, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR],
+      tasks: ALL_JOBS,
       escortCarriesBags: true,
       breakChance: 0.7,
       pricingEnabled: true,
@@ -1130,7 +1160,7 @@ export function levelConfig(level) {
       startOccupancy: 0.6, reservations: 4, walkInChance: 0.06, phoneCalls: 13,
       hired: [{ role: ROLE.RECEPTION, tier: 1 }, { role: ROLE.BELLBOY, tier: 1 },
               { role: ROLE.HOUSEKEEPING, tier: 1 }, { role: ROLE.MAINTENANCE, tier: 1 }],
-      tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.PHONE, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR],
+      tasks: ALL_JOBS,
       escortCarriesBags: true,
       breakChance: 0.35,
       // You ARE the reservations desk now: reception stops taking calls.
@@ -1167,6 +1197,33 @@ export function levelConfig(level) {
  * The overrides stop at day 5. From day 6 the rank config governs again, which
  * is the point at which the player's own progress is meant to be driving things.
  */
+/**
+ * HOW LONG A GUEST WAITS WHILE THE PLAYER IS STILL LEARNING THE CONTROLS.
+ *
+ * Operator, after playtest: "for the first few days while the player is getting
+ * known to the mechanics the check-ins must have a lot more time to wait before
+ * walking out."
+ *
+ * A multiplier on `patienceSec` rather than a per-day number, so it scales with
+ * whatever the rank's patience becomes and cannot drift away from it. It decays
+ * to 1.0 by day 6, which is where the teaching arc ends and the simulation's own
+ * figure takes over - the same shape as every other onboarding curve here.
+ *
+ * This is NOT the 14:00 guarantee. That governs when patience STARTS (see
+ * WAIT_LADDER and Schedule.patienceStartsAt); this governs how long it lasts
+ * once it has. A guest who arrives at 15:00 on day 1 now has three real minutes
+ * of the player fumbling before they give up, instead of thirty-four seconds.
+ *
+ * UNVERIFIED. Method: day 1 at 3x turns a 34s patience into 102s, which is most
+ * of a 150s day - long enough that a first-time player cannot lose a guest by
+ * being slow, only by ignoring them. Plausible range 2-4x on day 1.
+ */
+export const ONBOARDING_PATIENCE = { 1: 3.0, 2: 2.5, 3: 2.0, 4: 1.6, 5: 1.3 };
+
+export function patienceMultiplier(day) {
+  return ONBOARDING_PATIENCE[day] ?? 1;
+}
+
 export const ONBOARDING_DAYS = {
   // Day 1 is check in and check OUT, and nothing else. The operator: "the main
   // goal of a hotel: have guests, check them in, and check them out." Escorting
@@ -1392,6 +1449,29 @@ export function hotelStars(context) {
 }
 
 let staffSeq = 0;
+/**
+ * SOMEBODY HIRED TODAY STARTS TODAY.
+ *
+ * THE BUG THIS FIXES, from the operator's playtest: "After i hired receptionist
+ * i still executed the role of receptionist because there were delay like 2-3
+ * hours when i hired him and when he started actually working... If i hire then
+ * and hit refresh it start immidiately working."
+ *
+ * The running shift is built once, at the start of the day, from a SNAPSHOT of
+ * the roster (`shiftOptions` in game.js). Hiring updated the property and
+ * nothing else, so the new person did not exist on the floor until a shift was
+ * next built - which is exactly what a refresh does, and why a refresh appeared
+ * to fix it. The wait was never a notice period; it was the rest of the day.
+ *
+ * A hotel does not work like that and neither should this: you hire somebody at
+ * eleven and they are on the desk at eleven.
+ *
+ * Returns a NEW shift, like everything else in this file.
+ */
+export function addStaffToShift(shift, { role, tier = 1 }) {
+  return { ...shift, staff: [...shift.staff, makeStaff(role, tier)] };
+}
+
 export function makeStaff(role, tier, stamina = null) {
   const spec = TIERS[tier];
   // Innate, and fixed for this person's whole career here.
@@ -1926,7 +2006,9 @@ function addTask(shift, type, {
 function addCheckIn(shift, guest) {
   if (!teachesWaiting(shift)) {
     return addTask(shift, TASK.CHECK_IN, {
-      guestId: guest.id, expiresIn: shift.config.patienceSec,
+      guestId: guest.id,
+      // See ONBOARDING_PATIENCE - the learning days are far more forgiving.
+      expiresIn: shift.config.patienceSec * patienceMultiplier(shiftDay(shift)),
     });
   }
   const hour = hourSeconds(shift);
@@ -2556,7 +2638,8 @@ export function tick(shift, dt) {
     room.awaitingCheckout = true;
     next.checkouts += 1;
     addTask(next, TASK.CHECK_OUT, {
-      roomId: room.id, guestId: room.guestId, expiresIn: next.config.patienceSec * 1.6,
+      roomId: room.id, guestId: room.guestId,
+      expiresIn: next.config.patienceSec * 1.6 * patienceMultiplier(shiftDay(next)),
     });
     room.guestId = null;
     // A departing guest reviews the WHOLE stay, most of which happened on days
@@ -2700,7 +2783,7 @@ export function tick(shift, dt) {
           // Longer than a check-in's patience: a guest already in the building
           // is not going to walk out over a slow towel. They get annoyed, which
           // is what EXPIRY_PENALTY is for.
-          expiresIn: next.config.patienceSec * 2.2,
+          expiresIn: next.config.patienceSec * 2.2 * patienceMultiplier(shiftDay(next)),
           flavour,
         });
       }

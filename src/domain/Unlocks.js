@@ -106,6 +106,20 @@ export function isUnlocked(career, role) {
 export function nextDepartment(career = {}, staffedRoles = [], options = {}) {
   const staffed = new Set(staffedRoles);
   /**
+   * A GOAL YOU HAVE MET BUT NOT ACTED ON MUST NOT BLOCK THE NEXT ONE.
+   *
+   * Operator: "When i fulfilled the first goal and it let me hire reception the
+   * goal doesnt change auto, if i do not want to hire reception is up to me. The
+   * next goal must not be stopped."
+   *
+   * Hiring is the player's choice - the whole point of the design is that they
+   * CAN work every job themselves and pay nobody. So a met goal is an offer
+   * standing open, not a gate: `skipMet` walks past anything already earned and
+   * shows the next thing there is to go and do. The offer does not expire - the
+   * staff screen still has the position open whenever they want it.
+   */
+  const skipMet = options.skipMet === true;
+  /**
    * ONLY DEPARTMENTS THE PLAYER'S RANK COULD ACTUALLY EMPLOY.
    *
    * THE BUG THIS FIXES, found while auditing the goals after the operator's
@@ -131,6 +145,7 @@ export function nextDepartment(career = {}, staffedRoles = [], options = {}) {
     if (staffed.has(role)) continue;
     if (employable && !employable.has(role)) continue;
     const progress = unlockProgress(career, role);
+    if (skipMet && progress.met) continue;
     const goal = progress.goal;
     const share = Math.min(1, (career[goal.counter] ?? 0) / goal.need);
     if (!best || share > best.share) best = { role, share, ...progress };
