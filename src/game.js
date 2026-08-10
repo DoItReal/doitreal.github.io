@@ -666,6 +666,22 @@ const groupHeads = new Map();
  * order, so rows never reshuffle under a thumb mid-tap.
  */
 function myJobs(shift) {
+  /**
+   * NO DAY RUNNING IS A REAL STATE, NOT AN IMPOSSIBLE ONE.
+   *
+   * THE BUG THIS FIXES, caught by the first headless boot this game has ever
+   * had (tools/domshim.mjs). The first-run branch shows the intro cards and
+   * calls `render()` before any shift exists, so this threw on `shift.player`
+   * at MODULE SCOPE - which meant the `requestAnimationFrame(frame)` on the very
+   * next line never ran. The cards still painted and the button still worked,
+   * because both were wired earlier, so the game looked fine and then sat
+   * perfectly still: "after closing it the game was frozen. Needed refresh to
+   * unfroze it." A refresh took the other branch, which builds a shift first.
+   *
+   * The floor also legitimately has no shift between a settled day and the next
+   * one - see `paintRestDay` - so this is the honest guard, not a patch.
+   */
+  if (!shift) return [];
   const board = taskBoard(shift);
   const rows = [];
   if (shift.player.taskId !== null) {
@@ -3714,6 +3730,18 @@ state.property = applyCareerBaseline(
  * the player spent reading.
  */
 const firstRun = !localStorage.getItem(KEY_TUT);
+
+/**
+ * THE FRAME LOOP STARTS BEFORE ANYTHING THAT CAN THROW.
+ *
+ * It used to start after the first `render()`, on the next line, which made any
+ * boot-time exception fatal rather than ugly: the loop never started, so the
+ * game froze solid while still looking painted. That is exactly how the frozen
+ * first run shipped. The loop is cheap and idempotent - start it first, and a
+ * bad paint costs a frame instead of the session.
+ */
+requestAnimationFrame(frame);
+
 if (firstRun) {
   setPaused(true);
   introBeat = 0;
@@ -3721,11 +3749,9 @@ if (firstRun) {
   el("tut-veil").classList.add("show");
   analytics.track("tutorial_start");
   render();
-  requestAnimationFrame(frame);
 } else {
   returnToProperty();
   render();
-  requestAnimationFrame(frame);
   beginDay();
   // startShift unpauses; if the return card is up, the floor waits behind it.
   if (el("away-veil").classList.contains("show")) setPaused(true);
