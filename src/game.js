@@ -283,8 +283,46 @@ const PANELS = [
 /** What `paused` was before the first panel opened, or null if none is open. */
 let pausedBeforePanel = null;
 
-/** One place that owns the flag AND the button, which used to be set apart. */
+/**
+ * One place that owns the flag, the button AND the paused-time catch-up - the
+ * three of which used to be set apart.
+ *
+ * THE BUG THIS FIXES, reported by the operator on the deployed build: wipe the
+ * save, read the four intro cards, close the last one, and the clock already
+ * reads 13:40 instead of 08:00 - and the hotel is stuck paused until you
+ * refresh.
+ *
+ * The flag was flipped here, synchronously, while the matching catch-up - the
+ * one that hands every paused millisecond back to `lastSeenAt` - sat at the top
+ * of `frame`, one requestAnimationFrame away. The intro's "Open up" handler
+ * calls `setPaused(false)` and then `returnToProperty()` back to back in the
+ * same click, so `returnToProperty` ran BEFORE that frame and read a
+ * `lastSeenAt` still stamped at the instant the intro opened. It priced the
+ * whole reading time as time the hotel had been left alone. Day 1 compresses
+ * 150 real seconds into 16 game hours, so half a minute of reading projects as
+ * hours of hotel, and the away processing that follows is what leaves the game
+ * paused afterwards.
+ *
+ * So the catch-up happens HERE, in the same statement sequence as the flip.
+ * Nothing can run in between because there is no in between. `frame` now only
+ * paints the clock.
+ *
+ * Both directions are idempotent on purpose. Sheets open sheets, so a
+ * `setPaused(true)` while already paused must keep the ORIGINAL start instant
+ * instead of restarting it, and a redundant resume must not hand time back
+ * twice. That also covers boot, where `state.paused` starts true before anybody
+ * has called this.
+ */
 function setPaused(value) {
+  if (value) {
+    if (state.pausedSince === null) state.pausedSince = Date.now();
+  } else if (state.pausedSince !== null) {
+    // Every millisecond spent paused goes back to `lastSeenAt`, so the pause
+    // accrues nothing, rolls no day, and is never billed back as an absence.
+    state.property.lastSeenAt += Date.now() - state.pausedSince;
+    state.pausedSince = null;
+    saveProperty();
+  }
   state.paused = value;
   el("pause").textContent = value ? "Resume" : "Pause";
   if (!value) state.lastFrame = performance.now();
@@ -821,6 +859,21 @@ function runningProfit() {
   return profitCache.value;
 }
 
+/**
+ * The gap text for a department, with today's unbanked profit as a NOTE on it.
+ *
+ * The running figure is allowed to reassure and never to promise: it is glued
+ * onto a gap that is still open, so the player watches the money move without
+ * the line ever claiming the goal is done before `settleDay` has banked it.
+ * Only worth saying next to a PROFIT gap - it moves nothing else.
+ */
+function goalGapText(entry, running) {
+  const text = entry.gaps.map((g) => g.text).join("  -  ");
+  if (entry.met || running <= 0) return text;
+  if (!entry.gaps.some((g) => g.kind === "profit")) return text;
+  return `${text}   (+$${Math.round(running)} so far today, banks at close)`;
+}
+
 function paintGoal() {
   const rank = rankOf(state.property);
   const next = rank.next;
@@ -845,25 +898,31 @@ function paintGoal() {
    */
   const staffed = (state.property.roster ?? []).map((person) => person.role);
   /**
-   * TODAY'S PROFIT COUNTS TOWARD THE GOAL WHILE THE DAY IS STILL RUNNING.
+   * TODAY'S PROFIT IS SHOWN, AND IS NEVER ALLOWED TO DECIDE THAT A GOAL IS MET.
    *
-   * Operator's playtest: "it gets to 16$ more profit for finishing Open
-   * reception object and stays here no matter what i do." Two things were
-   * wrong. The first was real and structural, and is fixed in `settleDay` -
-   * lifetime profit was only ever credited by this file, so days that closed
-   * any other way never counted. The second is this one: profit is a DAY
+   * Why it is shown at all. Operator's playtest: "it gets to 16$ more profit
+   * for finishing Open reception object and stays here no matter what i do."
+   * Two things were wrong. The first was real and structural, and is fixed in
+   * `settleDay` - lifetime profit was only ever credited by this file, so days
+   * that closed any other way never counted. The second: profit is a DAY
    * number, banked at midnight, so even on a day that WAS going to count, the
-   * goal line sat frozen for the whole day and only jumped once, at the end.
-   * A goal you cannot watch move is the exact thing domain/Unlocks.js exists to
-   * get rid of.
+   * goal line sat frozen all day and jumped once, at the end. A goal you cannot
+   * watch move is the exact thing domain/Unlocks.js exists to get rid of.
    *
-   * So the LINE adds the day's profit so far. This is display only - nothing is
-   * banked here, `settleDay` still does that once - which is what keeps it
-   * honest when the running figure dips as wages accrue.
+   * THE BUG THAT COST US, and why the running figure may no longer be added
+   * into the career this line is judged against. It used to be: a padded copy
+   * of `career` went into every `nextDepartment` call here. `hireBlocker` in
+   * property.js judges the REAL `property.career`, because unbanked money is
+   * not money yet. So mid-day the padded copy crossed $300 first, this line
+   * said "Hire a receptionist - the goal is met", the Staff screen refused, and
+   * the player was caught between two screens telling them opposite things.
+   *
+   * The rule now: MET comes from `state.property.career`, the same object
+   * `hireBlocker` reads, so the two cannot disagree. The running figure is a
+   * text qualifier on a gap that is still open - see `goalGapText`. Display
+   * only, as before; it just no longer gets a vote.
    */
-  const career = { ...state.property.career };
   const running = runningProfit();
-  if (running > 0) career.profit = (career.profit ?? 0) + running;
   /**
    * ONLY DEPARTMENTS THIS RANK COULD EMPLOY. Without this the line tells a
    * rank-1 player who has answered a few phones to "Open reservations", which
@@ -872,32 +931,37 @@ function paintGoal() {
    */
   const level = rank.level;
   const employable = Object.keys(DEPARTMENT_GOALS).filter((role) => staffCap(level, role) > 0);
-  const department = nextDepartment(career, staffed, { employable });
+  const department = nextDepartment(state.property.career, staffed, { employable });
   /**
    * THE EARNED-BUT-UNTAKEN OFFER IS A NOTE, NOT THE GOAL. See nextDepartment's
    * skipMet. The player may never want to hire - working every job yourself and
    * paying nobody is a legitimate way to play - so the line names the next thing
    * to DO and mentions the standing offer beside it.
    */
-  const earned = nextDepartment(career, staffed, { employable });
-  const ahead = nextDepartment(career, staffed, { employable, skipMet: true });
+  const earned = nextDepartment(state.property.career, staffed, { employable });
+  const ahead = nextDepartment(state.property.career, staffed, { employable, skipMet: true });
   if (earned && earned.met && ahead) {
     label.textContent = `Open ${ahead.role}`;
-    need.textContent = `${ahead.gaps.map((g) => g.text).join("  -  ")}`
+    need.textContent = goalGapText(ahead, running)
       + `   (a ${earned.role} is waiting on the Staff screen whenever you want one)`;
-    bar.style.width = `${Math.max(0, Math.min(100, unlockShare(career, ahead.role) * 100))}%`;
+    bar.style.width =
+      `${Math.max(0, Math.min(100, unlockShare(state.property.career, ahead.role) * 100))}%`;
     return;
   }
   if (department && !department.met) {
     label.textContent = `Open ${department.role}`;
-    need.textContent = department.gaps.map((g) => g.text).join("  -  ");
+    need.textContent = goalGapText(department, running);
     /**
      * BOUND BY WHICHEVER HALF IS FURTHEST BEHIND. This used to read the WORK gap
      * alone, and a met gap is absent from the list - so the bar hit 100% the
      * moment the check-ins were done and sat there while the money was still
      * short. The operator saw a full bar over "$16 more profit". See unlockShare.
+     *
+     * Against the BANKED career, like everything else on this line - a bar that
+     * fills on unbanked money is the same lie in a thinner shape.
      */
-    bar.style.width = `${Math.max(0, Math.min(100, unlockShare(career, department.role) * 100))}%`;
+    bar.style.width =
+      `${Math.max(0, Math.min(100, unlockShare(state.property.career, department.role) * 100))}%`;
     return;
   }
   if (department && department.met) {
@@ -921,7 +985,7 @@ function paintGoal() {
 function displayClock() {
   const clock = clockOf(state.property);
   const seen = state.property.lastSeenAt ?? Date.now();
-  // Frozen at the instant of pausing - see the note in `frame`. The hotel is
+  // Frozen at the instant of pausing - see the note on `setPaused`. The hotel is
   // stopped, so the clock face has to be stopped with it.
   const at = state.pausedSince ?? Date.now();
   return clock.projected((at - seen) / 1000);
@@ -1258,28 +1322,16 @@ function frame(now) {
   requestAnimationFrame(frame);
   const shift = state.shift;
   /**
-   * PAUSE STOPS THE HOTEL, NOT JUST THE FLOOR.
+   * PAUSE STOPS THE HOTEL, NOT JUST THE FLOOR - but the bookkeeping for it is
+   * NOT here any more.
    *
-   * It used to stop only the floor: the heartbeat kept rolling days and settling
-   * them whatever this flag said, so the operator paused and watched the clock
-   * carry on without them - and a day could roll over, and be banked, while the
-   * game was supposedly stopped.
-   *
-   * `state.paused` is set from a dozen places (every panel that opens), so the
-   * transition is detected HERE rather than at each of them - one choke point
-   * that cannot be forgotten by the next thing that opens a screen.
-   *
-   * Every millisecond spent paused is handed back to `lastSeenAt` on resume, so
-   * the pause accrues nothing, rolls nothing, and is not later billed back as
-   * time the player was away.
+   * The paused interval used to be detected on this line, because a dozen
+   * places set the flag and one choke point could not be forgotten. It was one
+   * frame too late: a click that resumed and then read the clock in the same
+   * event saw a `lastSeenAt` this function had not caught up yet, which is the
+   * intro-clock bug. `setPaused` now owns the flag and the catch-up together,
+   * so there is nothing left to detect - only to paint.
    */
-  if (state.paused) {
-    if (state.pausedSince === null) state.pausedSince = Date.now();
-  } else if (state.pausedSince !== null) {
-    state.property.lastSeenAt += Date.now() - state.pausedSince;
-    state.pausedSince = null;
-    saveProperty();
-  }
   // Painted outside the early return so it keeps moving second by second while
   // the game runs. While paused `displayClock` freezes it, which is now honest:
   // the clock is stopped because the hotel is.
@@ -3118,8 +3170,8 @@ function returnToProperty() {
  */
 const heartbeat = setInterval(() => {
   if (document.hidden) return;
-  // PAUSED MEANS PAUSED. `frame` hands the paused interval back to `lastSeenAt`
-  // on resume, so nothing is lost by simply not advancing here.
+  // PAUSED MEANS PAUSED. `setPaused` hands the paused interval back to
+  // `lastSeenAt` on resume, so nothing is lost by simply not advancing here.
   if (state.paused) return;
   const before = clockOf(state.property).day;
 
@@ -3632,9 +3684,10 @@ state.property = applyCareerBaseline(
  *
  * So a first run is paused first, shown the cards, and only opens the floor when
  * the last one is dismissed. `setPaused(true)` before anything else means even
- * the heartbeat is held - it returns early while paused, and `frame` hands the
- * whole paused interval back to `lastSeenAt`, so the hotel is not billed for
- * the time the player spent reading.
+ * the heartbeat is held - it returns early while paused, and the matching
+ * `setPaused(false)` hands the whole paused interval back to `lastSeenAt`
+ * before `returnToProperty` reads it, so the hotel is not billed for the time
+ * the player spent reading.
  */
 const firstRun = !localStorage.getItem(KEY_TUT);
 if (firstRun) {
