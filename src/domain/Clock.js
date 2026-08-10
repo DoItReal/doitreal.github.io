@@ -81,34 +81,30 @@ export const PHASE = {
 };
 
 /**
- * THE HOURS THE PLAYABLE DAY ACTUALLY COVERS.
+ * THE HOURS THE PLAYABLE DAY COVERS. A FULL TWENTY-FOUR.
  *
- * `reality-check`, 2026-08-10, resolving the contradiction that blocked the
- * clock work (PLAN-v4 "Red team" item 1). The playable day used to map 1:1 onto
- * midnight-to-midnight, and two things followed:
+ * This was briefly compressed to 08:00-20:00 to give the operator's 12:00-14:00
+ * pinch a bigger share of the screen time. The operator rejected it on sight:
+ * "the day start at 08:00 which is not accurate for 24 hours it must be
+ * accurate." The clock on a hotel wall is not a game camera, and a day that
+ * skips the night is not a day.
  *
- *   - **A quarter of every day was night.** 00:00-06:00 is 25% of the run time
- *     spent in hours when a one-star's front desk does nothing. On days measured
- *     at 91-93% dead, some of that dead air was literally the small hours.
- *   - **The operator's busiest window got 8% of the day.** The brief calls
- *     12:00-14:00 "the busiest and most fragile part of the day" - departures
- *     must clear, housekeeping must turn the rooms, and arrivals are already in
- *     the lobby. At 1:1 that pinch was 15 seconds of a 180-second day. It is now
- *     16.7% of it, which is the proportion the source describes.
+ * WHAT THAT COSTS, STATED SO NOBODY RE-DISCOVERS IT. A literal mapping gives the
+ * 12:00-14:00 window 2/24 = 8.3% of the day, and puts a quarter of every day in
+ * the small hours when a one-star front desk has almost nothing to do.
  *
- * NOTE WHAT THIS IS NOT. There is no 14:00 check-in gate and there must not be.
- * The brief admits an early arrival whenever the room is "free and clean" -
- * readiness is the blocker, never the hour - and `canStart` already implements
- * exactly that. 14:00 is a guarantee boundary, not a lock. Adding a time gate
- * would stack a second blocker on the one task that is already the bottleneck,
- * and it is the half with no source behind it. See dec-20260809-6fdee8.
+ * THE OPERATOR'S OWN ANSWER TO THAT is not to hide the night but to fill it, and
+ * it is recorded in DESIGN.md rather than built here: "after 00:00 usually there
+ * is less work at reception so put receptionist to work on preparing for the
+ * next day... he can prepare keys, information he has to give to the guests" -
+ * and that preparation is meant to make the NEXT day's check-ins faster. Night
+ * shift as setup for the morning, which is exactly how a real night audit works.
  *
- * The hotel still TRADES around the clock; this is the window the player works.
- * Nothing below `game.js` schedules against `hour` - the day's own events run on
- * `shift.time` against `durationSec` - so this is the clock face and the phase
- * boundaries, and changing it cannot move the simulation underneath.
+ * NOTE WHAT THIS IS NOT. There is still no 14:00 check-in gate. Readiness blocks
+ * a check-in; the hour never does. What 14:00 governs is the guest's PATIENCE -
+ * see WAIT_LADDER in engine.js and dec-20260809-6fdee8.
  */
-export const OPERATING_WINDOW = { from: 8, to: 20 };
+export const OPERATING_WINDOW = { from: 0, to: 24 };
 
 export const PHASE_BOUNDS = [
   { phase: PHASE.NIGHT, from: 0, to: 6 },
@@ -139,12 +135,8 @@ export class Clock {
   get progress() { return Math.max(0, Math.min(1, this.elapsed / this.dayLength)); }
 
   /**
-   * In-game hour. What the UI puts on the clock face.
-   *
-   * THE PLAYABLE DAY IS THE OPERATING WINDOW, not midnight to midnight. See
-   * OPERATING_WINDOW - this used to be `progress * 24`, which spent a quarter of
-   * every day in hours when a hotel's front desk has nothing to do and squeezed
-   * the operator's busiest window into 8% of the screen time.
+   * In-game hour. What the UI puts on the clock face. A real 24-hour day - see
+   * OPERATING_WINDOW for why it is literal and what filling the night costs.
    */
   get hour() {
     const { from, to } = OPERATING_WINDOW;

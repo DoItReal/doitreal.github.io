@@ -47,6 +47,15 @@ export const TASK = {
    * in the game. Days 4 and 5 measured 91% and 93% dead at 100% occupancy.
    */
   REQUEST: "request",
+  /**
+   * THE NIGHT SHIFT, and what it buys the morning. See NIGHT_PREP.
+   *
+   * Operator: "after 00:00 usually there is less work at reception so put
+   * receptionist to work on preparing for the next day, this must help with the
+   * check-ins the next day. he can prepare keys, information he has to give to
+   * the guests."
+   */
+  PREP: "prep",
 };
 
 /**
@@ -115,7 +124,7 @@ export function isFnbRole(role) {
 
 /** Which task types each role covers. F&B roles cover none - they run outlets. */
 export const ROLE_TASKS = {
-  [ROLE.RECEPTION]: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.PHONE, TASK.REQUEST],
+  [ROLE.RECEPTION]: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.PHONE, TASK.REQUEST, TASK.PREP],
   // The operator: a bellboy "also helps reception with other jobs - a bellboy is
   // not idle between arrivals." Errands for guests already upstairs are exactly
   // that work, and it is why hiring one on day 2 is felt rather than explained.
@@ -161,6 +170,7 @@ export const TASK_SECONDS = {
   // Short on purpose. A request is a small favour, not a job of work - its
   // value is that there are MANY of them, spread through the day.
   [TASK.REQUEST]: 2.8,
+  [TASK.PREP]: 3.4,
 };
 
 /**
@@ -315,6 +325,7 @@ export const TASK_SUPPLIES = {
   // Amenities: the soap, the towel, the extra pillow. A request costs the hotel
   // something, or it is a free satisfaction tap and the player just spams it.
   [TASK.REQUEST]: [SUPPLY.AMENITIES],
+  [TASK.PREP]: [SUPPLY.DESK],
 };
 
 export function supplyCost(kind, { stars = 1, facilities = [] } = {}) {
@@ -871,6 +882,7 @@ export const TASK_ENERGY = {
   [TASK.PHONE]: 3,
   [TASK.BED]: 11,
   [TASK.REQUEST]: 6,
+  [TASK.PREP]: 7,
 };
 
 export const TASK_REWARD = {
@@ -890,6 +902,8 @@ export const TASK_REWARD = {
   // pattern the charter forbids, and the operator's own late check-out upsell is
   // the place a request is allowed to cost money - see REQUEST_FLAVOURS.
   [TASK.REQUEST]: { money: 0, satisfaction: 4 },
+  // Nothing tonight. The whole return on the night shift is tomorrow morning.
+  [TASK.PREP]: { money: 0, satisfaction: 0 },
 };
 
 /**
@@ -977,6 +991,9 @@ export const EXPIRY_PENALTY = {
   // Ignoring a guest who asked for something is worse than being slow to a job
   // nobody asked for. It is still not a walk-out - they are already staying.
   [TASK.REQUEST]: 7,
+  // Nobody is inconvenienced by prep that never happened - you simply do not
+  // get the morning it would have bought you.
+  [TASK.PREP]: 0,
 };
 
 export function mulberry32(seed) {
@@ -1104,7 +1121,7 @@ export const ONBOARDING_DAYS = {
   // goal of a hotel: have guests, check them in, and check them out." Escorting
   // is the BELLBOY's job and it moves to day 2 where it is taught.
   1: {
-    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT],
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.PREP],
     phoneCalls: 0, breakChance: 0, escortCarriesBags: false,
     // THE 14:00 GUARANTEE IS NOT TAUGHT TODAY. Operator: "Maybe do not learn
     // this on level 1, but we have to learn the player in the intro levels."
@@ -1113,14 +1130,14 @@ export const ONBOARDING_DAYS = {
   },
   // Day 2 - BELLBOY. Meets them at the door, carries the bags, walks them up.
   2: {
-    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT],
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.PREP],
     phoneCalls: 0, breakChance: 0, escortCarriesBags: true,
   },
   // Day 3 - HOUSEKEEPING. "Without them a room cannot be resold." Which is now
   // literally true: a departure leaves a DIRTY room and it cannot be sold again
   // until somebody turns it.
   3: {
-    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN],
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.PREP],
     phoneCalls: 0, breakChance: 0, escortCarriesBags: true,
   },
   // Day 4 - MAINTENANCE. "Without them everything breaks fast and not a single
@@ -1133,7 +1150,7 @@ export const ONBOARDING_DAYS = {
   // NOT rank 4's 0.7, which HANDOVER.md already records as visibly wrong now
   // that parts cost money. Needs the operator.
   4: {
-    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR],
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR, TASK.PREP],
     phoneCalls: 0, breakChance: 0.45, escortCarriesBags: true,
   },
   // Day 5 - RESERVATIONS. "Without him all the logistic, from getting the hotel
@@ -1144,7 +1161,7 @@ export const ONBOARDING_DAYS = {
   // 5 is enough that the department is unmistakably the subject of the day
   // without the desk becoming a call centre on its first sight of one.
   5: {
-    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR, TASK.PHONE],
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR, TASK.PHONE, TASK.PREP],
     phoneCalls: 5, breakChance: 0.3, escortCarriesBags: true,
   },
 };
@@ -1375,26 +1392,80 @@ export function makeStaff(role, tier, stamina = null) {
  */
 export const EARLY_ARRIVAL_SHARE = 0.25;
 
+/**
+ * THE HOURS GUESTS ACTUALLY TURN UP IN. Now that the day is a real 24 hours,
+ * these have to be real hours too - a booked guest arriving at 03:00 is not an
+ * early arrival, it is a bug with a clock on it.
+ *
+ *   EARLY, 09:00-14:00 - before the guarantee. They can be checked in if the
+ *   room is free and clean, and they wait for free if it is not.
+ *   THE REST, 14:00-22:00 - from the moment check-in is promised, through the
+ *   afternoon and into the evening.
+ */
+export const ARRIVAL_HOURS = { earliest: 9, guarantee: 14, latest: 22 };
+
+/**
+ * WHEN THE HOUSE EMPTIES. Check-out runs UNTIL 12:00 - the operator's brief -
+ * and a hotel's departures bunch in the last hours before it.
+ */
+export const CHECKOUT_HOURS = { from: 6.5, to: 12 };
+
+/**
+ * THE NIGHT SHIFT. What reception does between midnight and the first departure,
+ * and what it buys.
+ *
+ * Operator: "after 00:00 usually there is less work at reception so put
+ * receptionist to work on preparing for the next day, this must help with the
+ * check-ins the next day. he can prepare keys, information he has to give to
+ * the guests."
+ *
+ * This exists because the day became a real 24 hours. A literal clock puts a
+ * quarter of every day in hours a one-star front desk has nothing to do in -
+ * measured, it pushed the first thing to tap on day 1 from 4.5 seconds out to
+ * 37.5. The operator's answer was not to hide the night but to give it the job
+ * it really has, so the night audit is the game's first piece of SETUP work:
+ * cheap, unhurried, no guest waiting on it, and it pays out tomorrow morning.
+ *
+ * WHAT IT PAYS. Every prep job done shaves the desk time off one of the next
+ * day's check-ins - the key is already cut and the paperwork is already on the
+ * counter. Carried on the property as `preppedFor`, so it survives the night.
+ */
+export const NIGHT_PREP = {
+  /** Midnight until the morning gets going. */
+  from: 0,
+  to: 6.5,
+  /** Jobs available in one night, per ten rooms - a desk, not a factory. */
+  perTenRooms: 3,
+  /** Seconds off a check-in tomorrow, per prep done. */
+  savesPerCheckIn: 1.2,
+};
+
+/** How many prep jobs tonight is worth for this house. */
+export function nightPrepJobs(shift) {
+  return Math.max(1, Math.round((shift.roomCount / 10) * NIGHT_PREP.perTenRooms));
+}
+
 export function arrivalTime(index, total, durationSec, random) {
   const n = Math.max(1, total);
   const jitter = () => (random() - 0.5) * 6;
-  // Noon's position in the operating window, as a fraction of the played day.
-  const noon = (12 - OPERATING_WINDOW.from) / (OPERATING_WINDOW.to - OPERATING_WINDOW.from);
-  const noonAt = durationSec * noon;
+  const span = OPERATING_WINDOW.to - OPERATING_WINDOW.from;
+  const at = (hour) => ((hour - OPERATING_WINDOW.from) / span) * durationSec;
   const early = Math.max(1, Math.round(n * EARLY_ARRIVAL_SHARE));
 
   if (index < early) {
-    // Across the morning, first one on the doorstep so the day opens with work.
-    return Math.max(2, 3 + (index * (noonAt - 8)) / early + jitter());
+    const from = at(ARRIVAL_HOURS.earliest);
+    const width = at(ARRIVAL_HOURS.guarantee) - from;
+    return Math.max(2, from + (index * width) / early + jitter());
   }
   // Divided by `after`, not `after - 1`. Pushing the last arrival all the way to
   // the end of the span was tried and measured WORSE: on a day with three
   // arrivals it opens a hole in the MIDDLE (79.5s) instead of a shorter one at
   // the tail (50s), and a gap in the middle of the day is the one the operator
   // complained about.
+  const from = at(ARRIVAL_HOURS.guarantee);
+  const width = Math.max(0, at(ARRIVAL_HOURS.latest) - from);
   const after = n - early;
-  const span = durationSec - 12 - noonAt;
-  return Math.max(noonAt, noonAt + ((index - early) * span) / Math.max(1, after) + jitter());
+  return Math.max(from, from + ((index - early) * width) / Math.max(1, after) + jitter());
 }
 
 /**
@@ -1666,9 +1737,16 @@ export function createShift(level, seed, options = {}) {
         inHouse: occupied,
         // Only the guests whose LAST night was last night check out this
         // morning. Everyone else stays put, and their room never comes free.
+        /**
+         * CHECK-OUT IS UNTIL 12:00, so departures land in the morning that runs
+         * up to it - not scattered across the raw day. On a real 24-hour clock
+         * the old `4 + random() * 35% of the day` put guests at the desk
+         * settling their bill at half past midnight.
+         */
         checkoutAt: occupied
           && (!resident || resident.departureDay <= (options.today ?? 0))
-          ? 4 + random() * (config.durationSec * 0.35) : null,
+          ? config.durationSec * ((CHECKOUT_HOURS.from
+              + random() * (CHECKOUT_HOURS.to - CHECKOUT_HOURS.from)) / 24) : null,
       };
     }),
     reservations,
@@ -1697,6 +1775,11 @@ export function createShift(level, seed, options = {}) {
     tipsGiven: 0, escortsDone: 0, tookOver: 0, nightsSold: 0, checkouts: 0,
     /** Favours asked by guests already upstairs. See GUEST_REQUEST_RATE. */
     requests: 0, requestsDone: 0,
+    /** Night-shift jobs done tonight, and the ones done LAST night. See NIGHT_PREP. */
+    prepDone: 0,
+    preppedFor: Math.max(0, Math.round(options.preppedFor ?? 0)),
+    /** How much of last night's preparation today has already spent. */
+    prepUsed: 0,
     /** In-game hours guests spent waiting past the 14:00 grace. See WAIT_LADDER. */
     hoursKeptWaiting: 0,
     /** Guests who gave up and went to another hotel, at our expense. */
@@ -1783,6 +1866,22 @@ function addCheckIn(shift, guest) {
 
 export function taskSeconds(type, worker) {
   return TASK_SECONDS[type] * (worker && worker !== "player" ? worker.speed : 1);
+}
+
+/**
+ * What a check-in costs TODAY, after last night's preparation.
+ *
+ * The whole return on the night shift, and it is deliberately felt rather than
+ * announced: the keys are cut and the paperwork is on the counter, so the desk
+ * moves faster in the morning. Each prep covers one check-in, then it is used
+ * up - you cannot prepare once and coast for a week.
+ *
+ * Never below a third of the normal time. A check-in still involves a person.
+ */
+export function checkInSeconds(shift, worker) {
+  const base = taskSeconds(TASK.CHECK_IN, worker);
+  if ((shift.preppedFor ?? 0) - (shift.prepUsed ?? 0) <= 0) return base;
+  return Math.max(base / 3, base - NIGHT_PREP.savesPerCheckIn);
 }
 
 export function firstCleanRoom(shift) {
@@ -1938,8 +2037,19 @@ export function startTask(shift, taskId) {
   const task = next.tasks.find((t) => t.id === taskId);
   task.claimedBy = "player";
   next.player.taskId = taskId;
-  next.player.busyUntil = next.time + taskSeconds(task.type, "player");
+  next.player.busyUntil = next.time + workSeconds(next, task, "player");
   return next;
+}
+
+/** Seconds this task will take this worker, with last night's prep applied. */
+export function workSeconds(shift, task, worker) {
+  if (task.type !== TASK.CHECK_IN) return taskSeconds(task.type, worker);
+  const seconds = checkInSeconds(shift, worker);
+  if (seconds < taskSeconds(TASK.CHECK_IN, worker)) {
+    shift.prepUsed = (shift.prepUsed ?? 0) + 1;
+    task.prepped = true;
+  }
+  return seconds;
 }
 
 /**
@@ -2153,6 +2263,9 @@ function completeTask(shift, task, worker) {
   }
 
   if (task.type === TASK.REQUEST) shift.requestsDone += 1;
+
+  // The night's work is stored, not spent. It comes back as faster check-ins.
+  if (task.type === TASK.PREP) shift.prepDone += 1;
 }
 
 /**
@@ -2247,7 +2360,7 @@ export function tick(shift, dt) {
     if (waiting) {
       waiting.claimedBy = person.id;
       person.taskId = waiting.id;
-      person.busyUntil = next.time + taskSeconds(waiting.type, person);
+      person.busyUntil = next.time + workSeconds(next, waiting, person);
       person.energy = Math.max(0, person.energy - TASK_ENERGY[waiting.type]);
     }
   }
@@ -2418,6 +2531,29 @@ export function tick(shift, dt) {
     };
     next.guests.push(guest);
     addCheckIn(next, guest);
+  }
+
+  /**
+   * --- THE NIGHT SHIFT. See NIGHT_PREP. Only while it IS night, only on a day
+   * that has a night to work (the onboarding days that teach reception), and
+   * only ever a handful - the point is that the small hours are quiet, not that
+   * they are secretly the busiest part of the day.
+   */
+  if (next.config.tasks.includes(TASK.PREP)) {
+    const hourNow = (next.time / next.config.durationSec) * 24;
+    const spawned = next.tasks.filter((t) => t.type === TASK.PREP).length;
+    const wanted = nightPrepJobs(next);
+    if (hourNow >= NIGHT_PREP.from && hourNow < NIGHT_PREP.to && spawned < wanted) {
+      // Spread across the night rather than dumped at midnight.
+      const slot = (NIGHT_PREP.to - NIGHT_PREP.from) / wanted;
+      const dueBy = NIGHT_PREP.from + slot * spawned;
+      if (hourNow >= dueBy) {
+        addTask(next, TASK.PREP, {
+          // No expiry. Nobody is standing there; the work is simply available.
+          expiresIn: null,
+        });
+      }
+    }
   }
 
   /**
@@ -2647,6 +2783,9 @@ export function score(shift) {
     /** See WAIT_LADDER - guests lost to a late room, and hours of lateness. */
     relocatedByWait: shift.relocatedByWait ?? 0,
     hoursKeptWaiting: shift.hoursKeptWaiting ?? 0,
+    /** Night-shift jobs done, which the property carries into tomorrow. */
+    prepDone: shift.prepDone ?? 0,
+    prepUsed: shift.prepUsed ?? 0,
     walkIns: shift.walkIns,
     bookingsTaken: shift.bookingsTaken,
     stars: shift.stars,

@@ -119,6 +119,8 @@ const state = {
   property: null,
   shift: null,
   paused: true,
+  /** Epoch ms the current pause began, or null. See `frame`. */
+  pausedSince: null,
   lastFrame: 0,
   startedAt: 0,
   /** Playtest convenience: run a shift at 1x, 2x or 4x. */
@@ -164,6 +166,10 @@ const LABEL = {
   [TASK.REQUEST]: {
     tag: "REQ", name: "Guest request", sub: "Somebody upstairs needs something", tone: "req",
   },
+  [TASK.PREP]: {
+    tag: "NGT", name: "Prepare for tomorrow",
+    sub: "Cut keys, lay out the paperwork - a faster morning", tone: "ngt",
+  },
   [TASK.ESCORT]: { tag: "UP", name: "Show up to room", sub: "Optional - costs time, earns a tip", tone: "up" },
   [TASK.CLEAN]: { tag: "HK", name: "Turn the room", sub: "Cannot be sold dirty", tone: "hk" },
   [TASK.REPAIR]: { tag: "MT", name: "Fix the room", sub: "Out of order until fixed", tone: "mt" },
@@ -173,7 +179,7 @@ const LABEL = {
 const PAY = {
   [TASK.CHECK_IN]: "+$40", [TASK.ESCORT]: "+tip", [TASK.CLEAN]: "resells",
   [TASK.REPAIR]: "reopens", [TASK.PHONE]: "+booking", [TASK.BED]: "fits 3-4",
-  [TASK.CHECK_OUT]: "frees rm", [TASK.REQUEST]: "+happy",
+  [TASK.CHECK_OUT]: "frees rm", [TASK.REQUEST]: "+happy", [TASK.PREP]: "faster AM",
 };
 const ROLE_TAG = {
   reception: "IN", bellboy: "UP", housekeeping: "HK", maintenance: "MT", reservations: "TEL",
@@ -324,6 +330,8 @@ function shiftOptions(level) {
      */
     roster: availableRoster(state.property),
     rating: rating(),
+    // Last night's preparation, spent on this morning's check-ins. See NIGHT_PREP.
+    preppedFor: state.property.preppedFor ?? 0,
   };
 }
 
@@ -618,11 +626,27 @@ function buildJobs() {
   for (const child of [...list.children]) if (!keep.has(child)) child.remove();
   for (const [id, node] of jobNodes) if (!keep.has(node)) jobNodes.delete(id);
 
-  // insertBefore on a node already in the right place is a no-op in every
-  // engine; on one that moved it is a move, not a destroy-and-recreate.
-  wanted.forEach((node, i) => {
-    if (list.children[i] !== node) list.insertBefore(node, list.children[i] ?? null);
-  });
+  /**
+   * WALK A REFERENCE NODE, DO NOT INDEX THE LIVE COLLECTION.
+   *
+   * The obvious version of this - `if (list.children[i] !== wanted[i])
+   * insertBefore(...)` - is what made the operator report that "everything" was
+   * flashing. `list.children` is LIVE: the moment one row is inserted every
+   * index below it shifts by one, so every remaining row then compares unequal
+   * and gets re-inserted too. Re-inserting a node restarts its CSS animations,
+   * so a single new job re-animated the entire board.
+   *
+   * Measured: the row set changes about once every 3.5 seconds on a real day, so
+   * that cascade was firing constantly.
+   *
+   * Walking a reference pointer instead touches only the rows genuinely out of
+   * place, because inserting before `ref` does not move `ref`.
+   */
+  let ref = list.firstChild;
+  for (const node of wanted) {
+    if (ref === node) { ref = ref.nextSibling; continue; }
+    list.insertBefore(node, ref);
+  }
 
   list.dataset.signature = jobSignature(shift);
 }
@@ -678,7 +702,10 @@ function paintGoal() {
 function displayClock() {
   const clock = clockOf(state.property);
   const seen = state.property.lastSeenAt ?? Date.now();
-  return clock.projected((Date.now() - seen) / 1000);
+  // Frozen at the instant of pausing - see the note in `frame`. The hotel is
+  // stopped, so the clock face has to be stopped with it.
+  const at = state.pausedSince ?? Date.now();
+  return clock.projected((at - seen) / 1000);
 }
 
 /**
@@ -836,7 +863,8 @@ function paint() {
     const node = rooms.children[i];
     const job = shift.tasks.find((t) => t.roomId === room.id && t.doneAt === null);
     const needsMe = Boolean(job && job.claimedBy === null);
-    node.className = `room ${room.state}` + (needsMe ? " needsme" : "");
+    const roomCls = `room ${room.state}` + (needsMe ? " needsme" : "");
+    if (node.className !== roomCls) node.className = roomCls;
     // The door number, now that rooms are real doors. Falls back to a position
     // for a standalone shift with no floorplan behind it.
     node.querySelector("b").textContent = room.entity ? String(room.entity.number) : String(i + 1);
@@ -916,7 +944,9 @@ function paint() {
     }
     if (node.classList.contains("appear")) cls += " appear";
     if (node.classList.contains("flash")) cls += " flash";
-    node.className = cls;
+    // Only when it actually differs. Assigning the same string still writes the
+    // attribute and invites a style recalc sixty times a second, for nothing.
+    if (node.className !== cls) node.className = cls;
 
     const sub = node.querySelector(".sub");
     if (doing) sub.textContent = "You are on it now";
@@ -1008,11 +1038,32 @@ function pickJob(taskId) {
 function frame(now) {
   requestAnimationFrame(frame);
   const shift = state.shift;
-  // THE HOTEL DOES NOT PAUSE. `state.paused` stops the floor, not the business:
-  // the heartbeat keeps rolling days and settling them whatever this flag says.
-  // So the clock face is painted OUTSIDE the early return - freezing it while
-  // the hotel carried on was half of the operator's stepping-clock report, and
-  // the other half was watching it jump on resume.
+  /**
+   * PAUSE STOPS THE HOTEL, NOT JUST THE FLOOR.
+   *
+   * It used to stop only the floor: the heartbeat kept rolling days and settling
+   * them whatever this flag said, so the operator paused and watched the clock
+   * carry on without them - and a day could roll over, and be banked, while the
+   * game was supposedly stopped.
+   *
+   * `state.paused` is set from a dozen places (every panel that opens), so the
+   * transition is detected HERE rather than at each of them - one choke point
+   * that cannot be forgotten by the next thing that opens a screen.
+   *
+   * Every millisecond spent paused is handed back to `lastSeenAt` on resume, so
+   * the pause accrues nothing, rolls nothing, and is not later billed back as
+   * time the player was away.
+   */
+  if (state.paused) {
+    if (state.pausedSince === null) state.pausedSince = Date.now();
+  } else if (state.pausedSince !== null) {
+    state.property.lastSeenAt += Date.now() - state.pausedSince;
+    state.pausedSince = null;
+    saveProperty();
+  }
+  // Painted outside the early return so it keeps moving second by second while
+  // the game runs. While paused `displayClock` freezes it, which is now honest:
+  // the clock is stopped because the hotel is.
   el("clock").textContent = displayClock().label;
   if (!shift || state.paused || shift.over) { state.lastFrame = now; return; }
 
@@ -1189,6 +1240,13 @@ function endShift() {
    * profit target. It is earned by operating - and it needs the property to
    * justify it as well, so nobody grinds a tiny hotel to general manager.
    */
+  /**
+   * TONIGHT'S PREPARATION BECOMES TOMORROW'S MORNING. Whatever was not used
+   * today is not carried on top - a desk prepares for the day ahead, not for
+   * the rest of the month.
+   */
+  state.property = { ...state.property, preppedFor: result.prepDone ?? 0 };
+
   // THE BOOKS. Every line of the day, itemised, before anything summarises it.
   state.property = recordTradingDay(state.property, result, {
     day: workedDay, at: Date.now(), source: "worked",
@@ -2828,6 +2886,9 @@ function returnToProperty() {
  */
 const heartbeat = setInterval(() => {
   if (document.hidden) return;
+  // PAUSED MEANS PAUSED. `frame` hands the paused interval back to `lastSeenAt`
+  // on resume, so nothing is lost by simply not advancing here.
+  if (state.paused) return;
   const before = clockOf(state.property).day;
   const timeline = advanceTimeline(state.property, Date.now(), { level: state.level });
   state.property = timeline.property;

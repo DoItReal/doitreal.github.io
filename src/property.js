@@ -876,6 +876,12 @@ export function createProperty(now, options = {}) {
      */
     lastAwardedDay: options.lastAwardedDay ?? 0,
     /**
+     * NIGHT-SHIFT WORK BANKED FOR TOMORROW. See NIGHT_PREP in engine.js: keys
+     * cut and paperwork laid out overnight make the next morning's check-ins
+     * quicker. It survives the day because that is the entire point of it.
+     */
+    preppedFor: options.preppedFor ?? 0,
+    /**
      * THE FORWARD BOOK. Reservations for days that have not happened yet, which
      * is what makes the reservations department a job rather than a coin flip.
      * Stored as plain JSON; `bookOf` hands back a real Calendar.
@@ -1515,6 +1521,7 @@ export function deserialize(text, now) {
     clock: saved.clock ?? new Clock({ startedAt: saved.openedAt ?? now, day: 1 }).toJSON(),
     lastSettledDay: saved.lastSettledDay ?? 0,
     lastAwardedDay: saved.lastAwardedDay ?? 0,
+    preppedFor: saved.preppedFor ?? 0,
   };
 
   // SAVE MIGRATION. Every save written before today has a room COUNT and no
