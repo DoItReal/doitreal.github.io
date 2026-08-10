@@ -26,7 +26,12 @@
 // Clock.js imports nothing, so this direction is safe: engine.js -> Clock.js
 // closes no cycle. (Room.js is the one that cannot be imported here - see
 // ROOM_TYPE_RATE, which is duplicated for exactly that reason.)
-import { OPERATING_WINDOW } from "./domain/Clock.js";
+import {
+  GUARANTEE_HOUR, NIGHT_PREP_HOURS,
+  acceptsWalkIns, arrivalTime, checkoutTime, hourAt as scheduleHourAt,
+  hourSeconds as scheduleHour,
+  isNightShift, patienceStartsAt as schedulePatience, timeOfHour as scheduleTimeOfHour,
+} from "./domain/Schedule.js";
 
 export const TASK = {
   CHECK_IN: "check_in",
@@ -1393,24 +1398,6 @@ export function makeStaff(role, tier, stamina = null) {
 export const EARLY_ARRIVAL_SHARE = 0.25;
 
 /**
- * THE HOURS GUESTS ACTUALLY TURN UP IN. Now that the day is a real 24 hours,
- * these have to be real hours too - a booked guest arriving at 03:00 is not an
- * early arrival, it is a bug with a clock on it.
- *
- *   EARLY, 09:00-14:00 - before the guarantee. They can be checked in if the
- *   room is free and clean, and they wait for free if it is not.
- *   THE REST, 14:00-22:00 - from the moment check-in is promised, through the
- *   afternoon and into the evening.
- */
-export const ARRIVAL_HOURS = { earliest: 9, guarantee: 14, latest: 22 };
-
-/**
- * WHEN THE HOUSE EMPTIES. Check-out runs UNTIL 12:00 - the operator's brief -
- * and a hotel's departures bunch in the last hours before it.
- */
-export const CHECKOUT_HOURS = { from: 6.5, to: 12 };
-
-/**
  * THE NIGHT SHIFT. What reception does between midnight and the first departure,
  * and what it buys.
  *
@@ -1431,41 +1418,18 @@ export const CHECKOUT_HOURS = { from: 6.5, to: 12 };
  * counter. Carried on the property as `preppedFor`, so it survives the night.
  */
 export const NIGHT_PREP = {
-  /** Midnight until the morning gets going. */
-  from: 0,
-  to: 6.5,
   /** Jobs available in one night, per ten rooms - a desk, not a factory. */
   perTenRooms: 3,
   /** Seconds off a check-in tomorrow, per prep done. */
   savesPerCheckIn: 1.2,
 };
 
+/** The hours it runs in live in Schedule.js, with every other hour of the day. */
+export { NIGHT_PREP_HOURS };
+
 /** How many prep jobs tonight is worth for this house. */
 export function nightPrepJobs(shift) {
   return Math.max(1, Math.round((shift.roomCount / 10) * NIGHT_PREP.perTenRooms));
-}
-
-export function arrivalTime(index, total, durationSec, random) {
-  const n = Math.max(1, total);
-  const jitter = () => (random() - 0.5) * 6;
-  const span = OPERATING_WINDOW.to - OPERATING_WINDOW.from;
-  const at = (hour) => ((hour - OPERATING_WINDOW.from) / span) * durationSec;
-  const early = Math.max(1, Math.round(n * EARLY_ARRIVAL_SHARE));
-
-  if (index < early) {
-    const from = at(ARRIVAL_HOURS.earliest);
-    const width = at(ARRIVAL_HOURS.guarantee) - from;
-    return Math.max(2, from + (index * width) / early + jitter());
-  }
-  // Divided by `after`, not `after - 1`. Pushing the last arrival all the way to
-  // the end of the span was tried and measured WORSE: on a day with three
-  // arrivals it opens a hole in the MIDDLE (79.5s) instead of a shorter one at
-  // the tail (50s), and a gap in the middle of the day is the one the operator
-  // complained about.
-  const from = at(ARRIVAL_HOURS.guarantee);
-  const width = Math.max(0, at(ARRIVAL_HOURS.latest) - from);
-  const after = n - early;
-  return Math.max(from, from + ((index - early) * width) / Math.max(1, after) + jitter());
 }
 
 /**
@@ -1502,8 +1466,8 @@ export function arrivalTime(index, total, durationSec, random) {
  * rather than a risk.
  */
 export const WAIT_LADDER = {
-  /** The hour the hotel's promise starts. Check-in is FROM 14:00. */
-  guaranteeHour: 14,
+  /** The hour the hotel's promise starts. Defined in Schedule.js with the rest. */
+  guaranteeHour: GUARANTEE_HOUR,
   /** Hours of lateness a guest shrugs off. */
   graceHours: 1,
   /** They start looking elsewhere somewhere in this window. */
@@ -1512,23 +1476,28 @@ export const WAIT_LADDER = {
   satisfactionPerHour: 5,
 };
 
-/** Real seconds one in-game hour lasts on this day. */
-export function hourSeconds(shift) {
-  const span = OPERATING_WINDOW.to - OPERATING_WINDOW.from;
-  return shift.config.durationSec / span;
-}
-
-/** The shift-time at which a given in-game hour falls. */
-export function timeOfHour(shift, hour) {
-  return (hour - OPERATING_WINDOW.from) * hourSeconds(shift);
-}
-
 /**
- * When THIS guest's patience starts running: not before the hotel has promised
- * them anything. An early arrival waits for free until 14:00.
+ * The three questions the wait ladder asks about time, answered by the shift's
+ * own day. Thin wrappers on `Schedule.js` so callers here never have to carry
+ * the day number and the day length around separately.
  */
+export function shiftDay(shift) { return shift.today ?? 1; }
+
+/** The clock face inside this shift right now. */
+export function hourAtShift(shift) {
+  return scheduleHourAt(shiftDay(shift), shift.config.durationSec, shift.time);
+}
+
+export function hourSeconds(shift) {
+  return scheduleHour(shiftDay(shift), shift.config.durationSec);
+}
+
+export function timeOfHour(shift, hour) {
+  return scheduleTimeOfHour(shiftDay(shift), shift.config.durationSec, hour);
+}
+
 export function patienceStartsAt(shift, arrivedAt) {
-  return Math.max(arrivedAt, timeOfHour(shift, WAIT_LADDER.guaranteeHour));
+  return schedulePatience(shiftDay(shift), shift.config.durationSec, arrivedAt);
 }
 
 /** Whether this day teaches the wait ladder at all. Day 1 does not - see ONBOARDING_DAYS. */
@@ -1554,6 +1523,11 @@ export function createShift(level, seed, options = {}) {
    * phone had a fixed cadence, so both would have fired four times as often or
    * bunched into the first two minutes.
    */
+  /**
+   * WHICH DAY THIS IS. The timetable depends on it - day 1 opens at 08:00, every
+   * day after runs midnight to midnight. See Schedule.js.
+   */
+  const today = options.today ?? 1;
   const durationSec = Math.max(30, Math.round(options.durationSec ?? base.durationSec));
   const stretch = durationSec / base.durationSec;
   const config = {
@@ -1641,7 +1615,7 @@ export function createShift(level, seed, options = {}) {
     booked.forEach((arrival, i) => {
       reservations.push({
         id: arrival.id ?? i + 1,
-        dueAt: arrivalTime(i, booked.length, config.durationSec, random),
+        dueAt: arrivalTime(i, booked.length, today, config.durationSec, random),
         source: "book",
         nights: arrival.nights ?? 1,
         guests: arrival.guests ?? 2,
@@ -1656,7 +1630,7 @@ export function createShift(level, seed, options = {}) {
     for (let i = 0; i < bookings; i += 1) {
       reservations.push({
         id: i + 1,
-        dueAt: arrivalTime(i, bookings, config.durationSec, random),
+        dueAt: arrivalTime(i, bookings, today, config.durationSec, random),
         source: "book",
         nights: pickWeighted(scratch, NIGHT_MIX).nights,
         guests: pickWeighted(scratch, PARTY_MIX).guests,
@@ -1672,6 +1646,8 @@ export function createShift(level, seed, options = {}) {
 
   return {
     level, seed, config,
+    /** The day on the timeline this shift is. Schedule.js needs it. */
+    today,
     stars, certification, facilities,
     /**
      * What the player charges per cover in each outlet, keyed by FACILITY. An
@@ -1745,8 +1721,7 @@ export function createShift(level, seed, options = {}) {
          */
         checkoutAt: occupied
           && (!resident || resident.departureDay <= (options.today ?? 0))
-          ? config.durationSec * ((CHECKOUT_HOURS.from
-              + random() * (CHECKOUT_HOURS.to - CHECKOUT_HOURS.from)) / 24) : null,
+          ? checkoutTime(today, config.durationSec, random) : null,
       };
     }),
     reservations,
@@ -2540,14 +2515,15 @@ export function tick(shift, dt) {
    * they are secretly the busiest part of the day.
    */
   if (next.config.tasks.includes(TASK.PREP)) {
-    const hourNow = (next.time / next.config.durationSec) * 24;
+    const day = shiftDay(next);
     const spawned = next.tasks.filter((t) => t.type === TASK.PREP).length;
     const wanted = nightPrepJobs(next);
-    if (hourNow >= NIGHT_PREP.from && hourNow < NIGHT_PREP.to && spawned < wanted) {
-      // Spread across the night rather than dumped at midnight.
-      const slot = (NIGHT_PREP.to - NIGHT_PREP.from) / wanted;
-      const dueBy = NIGHT_PREP.from + slot * spawned;
-      if (hourNow >= dueBy) {
+    // Day 1 opens at 08:00, so it simply has no night to work - which falls out
+    // of the timetable rather than needing a special case here.
+    if (isNightShift(day, next.config.durationSec, next.time) && spawned < wanted) {
+      const slot = (NIGHT_PREP_HOURS.to - NIGHT_PREP_HOURS.from) / wanted;
+      const dueBy = NIGHT_PREP_HOURS.from + slot * spawned;
+      if (hourAtShift(next) >= dueBy) {
         addTask(next, TASK.PREP, {
           // No expiry. Nobody is standing there; the work is simply available.
           expiresIn: null,
@@ -2593,8 +2569,18 @@ export function tick(shift, dt) {
     }
   }
 
-  // --- walk-ins: unbooked, only worth taking if you genuinely have space
-  if (next.time < next.config.durationSec && nextRandom(next) < next.config.walkInChance * dt * 0.25) {
+  /**
+   * --- WALK-INS: unbooked, only worth taking if you genuinely have space, and
+   * only during the hours a hotel actually receives strangers.
+   *
+   * THE BUG: booked arrivals were anchored to real hours and this was not, so it
+   * fired as a flat probability across the whole day and produced check-ins at
+   * six in the morning. The operator: "now i get many check-ins between 00:00
+   * and 08:00 this is not okay." See WALK_IN_HOURS in Schedule.js.
+   */
+  if (next.time < next.config.durationSec
+    && acceptsWalkIns(shiftDay(next), next.config.durationSec, next.time)
+    && nextRandom(next) < next.config.walkInChance * dt * 0.25) {
     if (roomsAvailable(next) > outstandingBookings(next)) {
       // Walk-ins are the genuine one-nighters, and there are few of them.
       const guest = {

@@ -47,8 +47,20 @@ export {
 export { Calendar, DEFAULT_HORIZON, DESK_FORESIGHT, judgeBooking } from "./Calendar.js";
 
 export {
-  Clock, PHASE, PHASE_BOUNDS, OPERATING_WINDOW, DAY_SECONDS_BY_LEVEL, daySeconds,
+  Clock, PHASE, PHASE_BOUNDS, DAY_SECONDS_BY_LEVEL, daySeconds,
 } from "./Clock.js";
+
+/**
+ * THE TIMETABLE. Every "what time of day does X happen" - the hours each day
+ * covers, when guests arrive, when rooms are checked out, when the night shift
+ * runs. One file, so a clock bug is one file. See Schedule.js.
+ */
+export {
+  DAY_START_HOUR, GUARANTEE_HOUR, CHECKOUT_HOURS, ARRIVAL_HOURS, WALK_IN_HOURS,
+  NIGHT_PREP_HOURS, EARLY_ARRIVAL_SHARE,
+  dayWindow, dayHours, hourSeconds, hourAt, timeOfHour, dayCovers,
+  arrivalTime, checkoutTime, patienceStartsAt, acceptsWalkIns, isNightShift,
+} from "./Schedule.js";
 
 export {
   Progression, LEVELS, MAX_LEVEL as MAX_RANK, XP,

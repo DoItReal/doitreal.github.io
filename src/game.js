@@ -1129,7 +1129,11 @@ function awardWorkedDay(result, workedDay) {
   return award;
 }
 
-function endShift() {
+/**
+ * @param {number|null} dayWorked The day this shift BELONGS to. Pass it whenever
+ *   the caller has already moved the clock - see the heartbeat.
+ */
+function endShift(dayWorked = null) {
   const result = score(state.shift);
   const seconds = Math.round((Date.now() - state.startedAt) / 1000);
   analytics.levelComplete(state.level, result.profit, result.target, seconds);
@@ -1150,7 +1154,20 @@ function endShift() {
   // what stops the timeline settling it a second time as an unsupervised day -
   // see lastSettledDay in property.js. Without it, working a day and then
   // switching tabs would pay for it twice.
-  const workedDay = clockOf(state.property).day;
+  /**
+   * THE DAY THIS SHIFT BELONGS TO, WHICH IS NOT ALWAYS THE DAY ON THE CLOCK.
+   *
+   * THE BUG: the heartbeat calls `advanceTimeline` FIRST - rolling the clock to
+   * the new day - and only then closes the running shift. Reading the day off
+   * the clock here therefore recorded the day you had just worked against
+   * TOMORROW, and set `lastAwardedDay` a day ahead. So the worked day earned no
+   * experience, and the next day found `alreadyAwarded` already true and earned
+   * none either. Every day, silently.
+   *
+   * The caller that moved the clock is the only one that knows which day ended,
+   * so it now says.
+   */
+  const workedDay = dayWorked ?? clockOf(state.property).day;
   /**
    * BANK THE DAY ONCE, whatever route got us here.
    *
@@ -1187,6 +1204,7 @@ function endShift() {
   if (alreadySettled) {
     // The money went in as an absence. The experience did not go in at all.
     awardWorkedDay(result, workedDay);
+    saveProperty();
     return;
   }
   state.property = settleDay(state.property, {
@@ -2904,7 +2922,8 @@ const heartbeat = setInterval(() => {
      */
     if (state.shift && !state.shift.over) {
       state.shift = { ...state.shift, over: true };
-      endShift();
+      // `before` - the clock has already rolled past the day this shift worked.
+      endShift(before);
     }
     // A new trading day: roll the book with it, then say so - the rollover is
     // the rhythm the whole game runs on.

@@ -25,6 +25,8 @@
  * player's time per in-game day stays roughly constant.
  */
 
+import { hourAt, dayWindow } from "./Schedule.js";
+
 /** Real seconds one in-game day takes, by career level. */
 export const DAY_SECONDS_BY_LEVEL = {
   1: 10 * 60,     // ten minutes - a whole day inside a first session
@@ -80,38 +82,18 @@ export const PHASE = {
   EVENING: "evening",     // 18:00-24:00  dinner service, the bar
 };
 
-/**
- * THE HOURS THE PLAYABLE DAY COVERS. A FULL TWENTY-FOUR.
- *
- * This was briefly compressed to 08:00-20:00 to give the operator's 12:00-14:00
- * pinch a bigger share of the screen time. The operator rejected it on sight:
- * "the day start at 08:00 which is not accurate for 24 hours it must be
- * accurate." The clock on a hotel wall is not a game camera, and a day that
- * skips the night is not a day.
- *
- * WHAT THAT COSTS, STATED SO NOBODY RE-DISCOVERS IT. A literal mapping gives the
- * 12:00-14:00 window 2/24 = 8.3% of the day, and puts a quarter of every day in
- * the small hours when a one-star front desk has almost nothing to do.
- *
- * THE OPERATOR'S OWN ANSWER TO THAT is not to hide the night but to fill it, and
- * it is recorded in DESIGN.md rather than built here: "after 00:00 usually there
- * is less work at reception so put receptionist to work on preparing for the
- * next day... he can prepare keys, information he has to give to the guests" -
- * and that preparation is meant to make the NEXT day's check-ins faster. Night
- * shift as setup for the morning, which is exactly how a real night audit works.
- *
- * NOTE WHAT THIS IS NOT. There is still no 14:00 check-in gate. Readiness blocks
- * a check-in; the hour never does. What 14:00 governs is the guest's PATIENCE -
- * see WAIT_LADDER in engine.js and dec-20260809-6fdee8.
- */
-export const OPERATING_WINDOW = { from: 0, to: 24 };
-
 export const PHASE_BOUNDS = [
   { phase: PHASE.NIGHT, from: 0, to: 6 },
   { phase: PHASE.MORNING, from: 6, to: 12 },
   { phase: PHASE.AFTERNOON, from: 12, to: 18 },
   { phase: PHASE.EVENING, from: 18, to: 24 },
 ];
+
+/**
+ * Re-exported so callers that think in "the hours of the day" have one import.
+ * The definition lives in Schedule.js, which is the authority - see its header.
+ */
+export { dayWindow };
 
 export class Clock {
   /**
@@ -135,13 +117,13 @@ export class Clock {
   get progress() { return Math.max(0, Math.min(1, this.elapsed / this.dayLength)); }
 
   /**
-   * In-game hour. What the UI puts on the clock face. A real 24-hour day - see
-   * OPERATING_WINDOW for why it is literal and what filling the night costs.
+   * In-game hour. What the UI puts on the clock face.
+   *
+   * THE TIMETABLE IS NOT THIS FILE'S BUSINESS. `Schedule.js` owns which hours a
+   * day covers - a full twenty-four, except day 1 which opens at 08:00 when you
+   * take the keys. This clock only knows how far through the day it is.
    */
-  get hour() {
-    const { from, to } = OPERATING_WINDOW;
-    return from + this.progress * (to - from);
-  }
+  get hour() { return hourAt(this.day, this.dayLength, this.elapsed); }
 
   get phase() {
     const h = this.hour;
