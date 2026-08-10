@@ -1172,7 +1172,7 @@ export const ONBOARDING_DAYS = {
   // goal of a hotel: have guests, check them in, and check them out." Escorting
   // is the BELLBOY's job and it moves to day 2 where it is taught.
   1: {
-    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.PREP],
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT],
     phoneCalls: 0, breakChance: 0, escortCarriesBags: false,
     // THE 14:00 GUARANTEE IS NOT TAUGHT TODAY. Operator: "Maybe do not learn
     // this on level 1, but we have to learn the player in the intro levels."
@@ -1181,14 +1181,14 @@ export const ONBOARDING_DAYS = {
   },
   // Day 2 - BELLBOY. Meets them at the door, carries the bags, walks them up.
   2: {
-    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.PREP],
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT],
     phoneCalls: 0, breakChance: 0, escortCarriesBags: true,
   },
   // Day 3 - HOUSEKEEPING. "Without them a room cannot be resold." Which is now
   // literally true: a departure leaves a DIRTY room and it cannot be sold again
   // until somebody turns it.
   3: {
-    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.PREP],
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN],
     phoneCalls: 0, breakChance: 0, escortCarriesBags: true,
   },
   // Day 4 - MAINTENANCE. "Without them everything breaks fast and not a single
@@ -1201,7 +1201,7 @@ export const ONBOARDING_DAYS = {
   // NOT rank 4's 0.7, which HANDOVER.md already records as visibly wrong now
   // that parts cost money. Needs the operator.
   4: {
-    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR, TASK.PREP],
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR],
     phoneCalls: 0, breakChance: 0.45, escortCarriesBags: true,
   },
   // Day 5 - RESERVATIONS. "Without him all the logistic, from getting the hotel
@@ -1212,7 +1212,7 @@ export const ONBOARDING_DAYS = {
   // 5 is enough that the department is unmistakably the subject of the day
   // without the desk becoming a call centre on its first sight of one.
   5: {
-    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR, TASK.PHONE, TASK.PREP],
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR, TASK.PHONE],
     phoneCalls: 5, breakChance: 0.3, escortCarriesBags: true,
   },
 };
@@ -1489,6 +1489,29 @@ export const NIGHT_PREP = {
  * per expected check-in on the opening day. Plausible range 0.5-1.5 per room.
  */
 export const OPENING_PREP = { perRoom: 1 };
+
+/**
+ * PREPARATION IS SWITCHED OFF, 2026-08-10, on the operator's playtest.
+ *
+ * "Remove for now the tasks prepare for tommorow and get the room ready. Its not
+ * working and giving a lot of optional tasks flooding the task list. I will
+ * think how to add it on later stage."
+ *
+ * That is the human test overriding the harness, which is the rule
+ * `game-designer` pre-registered when it proposed the opening morning: measured,
+ * eight prep jobs filled day 1's first 37 seconds beautifully; played, they were
+ * a wall of optional work in front of the job that matters.
+ *
+ * HOW IT IS OFF: `TASK.PREP` is no longer in any day's `tasks` list, and the
+ * spawn block below is gated on that list, so nothing is created. Everything
+ * else - the two windows in Schedule.js, `prepJobs`, the `preppedFor` payoff,
+ * the labels - is intact and unreachable. Putting it back is adding `TASK.PREP`
+ * to a `tasks` array, which is what "add it on later stage" should cost.
+ *
+ * WHAT IT COST TO REMOVE, measured immediately after: day 1's morning is empty
+ * again between the first guest at 08:20 and noon. The first tap is still ~3s
+ * because the first guest of all is a scripted beat, not a prep job.
+ */
 
 /** The hours it runs in live in Schedule.js, with every other hour of the day. */
 export { NIGHT_PREP_HOURS, OPENING_PREP_HOURS };

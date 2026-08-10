@@ -803,6 +803,23 @@ function buildJobs() {
  * already looking. It states a direction, never a pass mark: there is no failing
  * this line, only being further from it.
  */
+/**
+ * The day's profit so far, at four times a second rather than sixty.
+ *
+ * `paintGoal` runs inside `render`, and `render` runs every animation frame, so
+ * a bare `score(shift)` here would price the whole day's F&B trade sixty times a
+ * second on a phone. Nothing the player can read changes faster than this, and
+ * this file has a history of frame-cost bugs.
+ */
+let profitCache = { at: 0, value: 0 };
+function runningProfit() {
+  if (!state.shift || state.shift.over) return 0;
+  const now = performance.now();
+  if (now - profitCache.at < 250) return profitCache.value;
+  profitCache = { at: now, value: Math.max(0, score(state.shift).profit ?? 0) };
+  return profitCache.value;
+}
+
 function paintGoal() {
   const rank = rankOf(state.property);
   const next = rank.next;
@@ -826,7 +843,27 @@ function paintGoal() {
    * rank once they are all open.
    */
   const staffed = (state.property.roster ?? []).map((person) => person.role);
-  const department = nextDepartment(state.property.career, staffed);
+  /**
+   * TODAY'S PROFIT COUNTS TOWARD THE GOAL WHILE THE DAY IS STILL RUNNING.
+   *
+   * Operator's playtest: "it gets to 16$ more profit for finishing Open
+   * reception object and stays here no matter what i do." Two things were
+   * wrong. The first was real and structural, and is fixed in `settleDay` -
+   * lifetime profit was only ever credited by this file, so days that closed
+   * any other way never counted. The second is this one: profit is a DAY
+   * number, banked at midnight, so even on a day that WAS going to count, the
+   * goal line sat frozen for the whole day and only jumped once, at the end.
+   * A goal you cannot watch move is the exact thing domain/Unlocks.js exists to
+   * get rid of.
+   *
+   * So the LINE adds the day's profit so far. This is display only - nothing is
+   * banked here, `settleDay` still does that once - which is what keeps it
+   * honest when the running figure dips as wages accrue.
+   */
+  const career = { ...state.property.career };
+  const running = runningProfit();
+  if (running > 0) career.profit = (career.profit ?? 0) + running;
+  const department = nextDepartment(career, staffed);
   if (department && !department.met) {
     label.textContent = `Open ${department.role}`;
     need.textContent = department.gaps.map((g) => g.text).join("  -  ");
@@ -1420,10 +1457,12 @@ function endShift(dayWorked = null) {
    * the rest of the month.
    */
   state.property = { ...state.property, preppedFor: result.prepDone ?? 0 };
-  // Lifetime profit is the other half of every department goal. It is a DAY
-  // number - a day's takings minus a day's wages - so unlike the jobs it can
-  // only be known when the day closes.
-  state.property = recordWork(state.property, { profit: Math.max(0, result.profit) });
+  /**
+   * LIFETIME PROFIT IS NOT CREDITED HERE ANY MORE. `settleDay` does it, because
+   * that is the funnel EVERY day goes through - including the ones that close
+   * while the app is shut, which this path never saw. Crediting it here as well
+   * would count a worked day twice. See settleDay in property.js.
+   */
 
   // THE BOOKS. Every line of the day, itemised, before anything summarises it.
   state.property = recordTradingDay(state.property, result, {

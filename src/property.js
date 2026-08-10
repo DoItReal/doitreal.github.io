@@ -1229,6 +1229,35 @@ export function settleDay(property, day, now) {
     // Reputation moves slowly: one night cannot rescue or ruin a hotel.
     next.rating = Math.round((next.rating * 0.72 + day.rating * 0.28) * 100) / 100;
   }
+  /**
+   * LIFETIME PROFIT IS CREDITED HERE, BECAUSE THIS IS WHERE EVERY DAY LANDS.
+   *
+   * THE BUG THIS FIXES, from the operator's playtest: "it gets to 16$ more
+   * profit for finishing Open reception object and stays here no matter what i
+   * do." It was true - `career.profit` is half of every department goal
+   * (domain/Unlocks.js) and the ONLY thing that ever wrote it was `endShift` in
+   * game.js. So the goal moved only on a day the player happened to be looking
+   * at the screen at the moment it closed. A day settled by the heartbeat, by
+   * coming back from an absence, or by the offline economy banked its money and
+   * contributed NOTHING to the goal - which on a phone, where sessions are
+   * short and days close while the app is shut, is most of them. The goal that
+   * gates the whole career could stall permanently.
+   *
+   * `settleDay` is the single funnel every one of those paths goes through, so
+   * crediting it here fixes all of them at once and cannot drift again.
+   *
+   * ONLY PROFITABLE DAYS COUNT, which is the behaviour that shipped: a loss does
+   * not eat progress the player has already made. SYNTHETIC DAYS DO NOT COUNT -
+   * the dev panel can seed trading days and must not be able to quietly satisfy
+   * a goal.
+   */
+  if (day.synthetic !== true) {
+    const earned = Math.max(0, Math.round(day.net));
+    if (earned > 0) {
+      next.career = { ...emptyCareer(), ...(next.career ?? {}) };
+      next.career.profit = Math.max(0, (next.career.profit ?? 0) + earned);
+    }
+  }
   next.lastSeenAt = now;
   return next;
 }
