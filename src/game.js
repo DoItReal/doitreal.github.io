@@ -22,6 +22,7 @@ import {
   levelConfig, outletBrigade, outletCapacity, outstandingBookings, roleWage,
   roomsAvailable, score, startTask, suggestTask, takeOver,
   taskBoard, taskSeconds, taskUrgency, tick,
+  hourSeconds, WAIT_LADDER,
 } from "./engine.js";
 import {
   BUILD_CATALOG, BUILD_KIND, OFFLINE_CAP_SECONDS, REFURB, ROOM as BUILD_ROOM,
@@ -924,13 +925,33 @@ function paint() {
       const person = shift.staff.find((p) => p.id === task.claimedBy);
       sub.textContent = person ? `${person.role} has it` : "staff have it";
     } else if (busy) sub.textContent = "Waiting - you are on another job";
-    else sub.textContent = LABEL[task.type].sub;
+    else if (task.type === TASK.CHECK_IN && task.dueFrom !== undefined
+      && shift.time < task.dueFrom) {
+      /**
+       * THE 14:00 GUARANTEE, SAID OUT LOUD. See WAIT_LADDER in engine.js. An
+       * early guest is not a problem yet and the board must not imply they are -
+       * but the player has to learn that 14:00 is coming, or the rule is
+       * invisible until it bites.
+       */
+      const mins = Math.max(0, Math.ceil((task.dueFrom - shift.time)
+        / hourSeconds(shift) * 60));
+      sub.textContent = `Early - check-in is from 14:00 (${mins} min)`;
+    } else if (task.type === TASK.CHECK_IN && task.dueFrom !== undefined) {
+      const lateHours = (shift.time - task.dueFrom) / hourSeconds(shift);
+      sub.textContent = lateHours < WAIT_LADDER.graceHours
+        ? "Waiting for their room"
+        : `${Math.floor(lateHours)}h late - they are looking elsewhere`;
+    } else sub.textContent = LABEL[task.type].sub;
 
     const fuse = node.querySelector(".fuse");
     if (doing) {
       const total = taskSeconds(task.type, "player");
       const done = 1 - Math.max(0, (shift.player.busyUntil - shift.time) / total);
       fuse.style.width = `${Math.min(100, done * 100)}%`;
+    } else if (task.type === TASK.CHECK_IN && task.dueFrom !== undefined
+      && shift.time < task.dueFrom) {
+      // NOT TICKING YET. The operator: "the countdown must not start until then."
+      fuse.style.width = "100%";
     } else if (task.expiresAt !== null) {
       fuse.style.width = `${(1 - urgency) * 100}%`;
     } else {
@@ -1033,6 +1054,30 @@ function frame(now) {
   render();
 }
 
+/**
+ * EXPERIENCE FOR A DAY WORKED, banked exactly once against `lastAwardedDay`.
+ *
+ * Split out of `endShift` because there are two ways into it now: the ordinary
+ * one, and the case where the heartbeat already banked the MONEY as an absence
+ * while the player was actually at the desk. The second path used to pay
+ * nothing at all - see the note on the guard in `endShift`.
+ */
+function awardWorkedDay(result, workedDay) {
+  const award = awardDay(state.property, result);
+  state.property = award.property;
+  state.property.lastAwardedDay = Math.max(
+    state.property.lastAwardedDay || 0, workedDay,
+  );
+  if (award.promoted) {
+    state.level = award.to;
+    state.unlocked = Math.max(state.unlocked, award.to);
+    localStorage.setItem(KEY_LEVEL, String(award.to));
+    localStorage.setItem(KEY_UNLOCKED, String(state.unlocked));
+    analytics.track("promotion", { from: award.from, to: award.to });
+  }
+  return award;
+}
+
 function endShift() {
   const result = score(state.shift);
   const seconds = Math.round((Date.now() - state.startedAt) / 1000);
@@ -1064,10 +1109,33 @@ function endShift() {
    * fourth would have been added eventually. A day is settled if the ledger
    * already has it, full stop.
    */
+  /**
+   * BANKING AND BEING PAID FOR IT ARE TWO DIFFERENT HIGH-WATER MARKS, and
+   * collapsing them into one silently ate the player's whole career.
+   *
+   * THE BUG, reported by the operator as "I was unable to get more experience".
+   * `awardDay` is called at the BOTTOM of this function. This guard was at the
+   * top and tested `lastSettledDay` - which the ten-second heartbeat sets when
+   * `advanceTimeline` rolls the day. `settleTimeline` never awards experience.
+   * So whenever the heartbeat rolled the day before this function got to it, the
+   * day was banked as an absence and the player earned NOTHING for having worked
+   * it - no experience, no ledger row, no promotion check.
+   *
+   * And the heartbeat wins by default rather than by accident: `frame` clamps
+   * `dt` to 0.25s and returns early while paused, so the shift clock can only
+   * ever LOSE time against the wall clock, never make it up. Pausing once is
+   * enough to guarantee it.
+   *
+   * So money is still banked once - `lastSettledDay` - and experience is now
+   * banked once against its own mark, `lastAwardedDay`. A day that was paid as
+   * an absence still owes the player the experience they worked for.
+   */
   const alreadySettled = (state.property.lastSettledDay || 0) >= workedDay;
+  const alreadyAwarded = (state.property.lastAwardedDay || 0) >= workedDay;
+  if (alreadySettled && alreadyAwarded) return;
   if (alreadySettled) {
-    // Already banked - by the heartbeat at rollover, most likely. Nothing to
-    // say and nothing to show: the floor simply reopens on the new day.
+    // The money went in as an absence. The experience did not go in at all.
+    awardWorkedDay(result, workedDay);
     return;
   }
   state.property = settleDay(state.property, {
@@ -1121,22 +1189,13 @@ function endShift() {
    * profit target. It is earned by operating - and it needs the property to
    * justify it as well, so nobody grinds a tiny hotel to general manager.
    */
-  const rankBefore = rankOf(state.property).level;
   // THE BOOKS. Every line of the day, itemised, before anything summarises it.
   state.property = recordTradingDay(state.property, result, {
     day: workedDay, at: Date.now(), source: "worked",
     occupancy: state.shift.roomCount
       ? Math.round((result.checkedIn / state.shift.roomCount) * 100) / 100 : null,
   });
-  const award = awardDay(state.property, result);
-  state.property = award.property;
-  if (award.promoted) {
-    state.level = award.to;
-    state.unlocked = Math.max(state.unlocked, award.to);
-    localStorage.setItem(KEY_LEVEL, String(award.to));
-    localStorage.setItem(KEY_UNLOCKED, String(state.unlocked));
-    analytics.track("promotion", { from: award.from, to: award.to });
-  }
+  const award = awardWorkedDay(result, workedDay);
   saveProperty();
 
   const moneyOk = result.profit >= result.target;

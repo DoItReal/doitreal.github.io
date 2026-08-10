@@ -50,13 +50,28 @@ export const XP = {
   COVER_TURNED_AWAY: -3,
 };
 
-/** Experience a settled day is worth, from the numbers that day produced. */
-export function dayExperience(result) {
+/**
+ * Experience a settled day is worth, from the numbers that day produced.
+ *
+ * THE OWNER IS NOT PAID FOR A JOB THEY EMPLOY SOMEBODY TO DO. Operator, after
+ * playtest: "The experience for the job must not be for the owner (the player)
+ * it must be mainly for the staff."
+ *
+ * So `XP.CHECK_IN` - the one task-shaped term in here - stops counting once a
+ * receptionist is on the payroll. Everything else is the BUSINESS result: nights
+ * sold, the rating, the profit, surviving the day. Those are the owner's to earn
+ * however the work got done, and they are what a rank should actually measure.
+ *
+ * @param {object} options `staffed` - roles the player employs.
+ */
+export function dayExperience(result, options = {}) {
   const rating = result.rating ?? 0;
+  const staffed = new Set(options.staffed ?? []);
+  const deskIsCovered = staffed.has("reception");
   return Math.max(0, Math.round(
     XP.DAY_SETTLED
     + (result.nightsSold ?? 0) * XP.NIGHT_SOLD
-    + (result.checkedIn ?? 0) * XP.CHECK_IN
+    + (deskIsCovered ? 0 : (result.checkedIn ?? 0) * XP.CHECK_IN)
     + rating * XP.REVIEW_STAR
     + Math.max(0, (result.profit ?? 0) / 100) * XP.PROFIT_PER_100
     + (result.upsells ?? 0) * XP.UPSELL
@@ -97,7 +112,16 @@ export const LEVELS = {
     title: "Head receptionist",
     subtitle: "Somebody else works the desk. You decide who sleeps where.",
     xp: 260,
-    requires: { rooms: 8, rating: 3.0 },
+    /**
+     * YOU HIRE YOUR REPLACEMENT, THEN YOU MOVE UP. Operator, after playtest:
+     * you cannot be Head Receptionist while you are still the receptionist.
+     * Somebody else has to be holding that desk.
+     *
+     * This is the game's whole premise finally expressed as a rule, and it is
+     * what makes the first $150 hire the thing that visibly moves you rather
+     * than a purchase that changed nothing.
+     */
+    requires: { rooms: 8, rating: 3.0, staffed: ["reception"] },
     staffCaps: { reception: 1, bellboy: 1, housekeeping: 1 },
     /**
      * THE VIEW, AND THE UPGRADE ECONOMY WITH IT - moved down from rank 3.
@@ -113,7 +137,10 @@ export const LEVELS = {
     title: "Duty manager",
     subtitle: "The floor runs itself. The rate and the room list are yours.",
     xp: 900,
-    requires: { rooms: 12, rating: 3.5, facilities: ["breakfast"] },
+    requires: {
+      rooms: 12, rating: 3.5, facilities: ["breakfast"],
+      staffed: ["reception", "bellboy"],
+    },
     staffCaps: { reception: 2, bellboy: 1, housekeeping: 2, maintenance: 1, chef: 1, waiter: 1 },
     reveals: ["roomFloor"],
   },
@@ -121,7 +148,10 @@ export const LEVELS = {
     title: "Front office manager",
     subtitle: "You are selling rooms you have not got yet.",
     xp: 2600,
-    requires: { rooms: 16, rating: 4.0, facilities: ["breakfast", "restaurant"] },
+    requires: {
+      rooms: 16, rating: 4.0, facilities: ["breakfast", "restaurant"],
+      staffed: ["reception", "bellboy", "housekeeping"],
+    },
     staffCaps: {
       reception: 3, bellboy: 2, housekeeping: 3, maintenance: 2,
       reservations: 1, chef: 2, waiter: 3, bartender: 1,
@@ -135,7 +165,10 @@ export const LEVELS = {
     title: "General manager",
     subtitle: "Every department reports to you. So does every mistake.",
     xp: 7000,
-    requires: { rooms: 22, rating: 4.3, facilities: ["breakfast", "restaurant", "bar"] },
+    requires: {
+      rooms: 22, rating: 4.3, facilities: ["breakfast", "restaurant", "bar"],
+      staffed: ["reception", "bellboy", "housekeeping", "maintenance"],
+    },
     staffCaps: {
       reception: 4, bellboy: 3, housekeeping: 5, maintenance: 3,
       reservations: 2, chef: 3, waiter: 4, bartender: 2,
@@ -229,6 +262,16 @@ export class Progression {
         text: `a ${need.rating.toFixed(1)} rating (you are at ${(property.rating ?? 0).toFixed(1)})`,
         have: property.rating ?? 0, need: need.rating,
       });
+    }
+    for (const role of need.staffed ?? []) {
+      const employed = (property.roster ?? []).some((person) => person.role === role);
+      if (!employed) {
+        gaps.push({
+          kind: "staffed",
+          text: `a ${role} on the payroll to hold the desk`,
+          role,
+        });
+      }
     }
     for (const facility of need.facilities ?? []) {
       if (!(property.facilities ?? []).includes(facility)) {

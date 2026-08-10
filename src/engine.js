@@ -1106,6 +1106,10 @@ export const ONBOARDING_DAYS = {
   1: {
     tasks: [TASK.CHECK_IN, TASK.CHECK_OUT],
     phoneCalls: 0, breakChance: 0, escortCarriesBags: false,
+    // THE 14:00 GUARANTEE IS NOT TAUGHT TODAY. Operator: "Maybe do not learn
+    // this on level 1, but we have to learn the player in the intro levels."
+    // Day 1 is check in and check out and nothing else on the player's mind.
+    waitLadder: false,
   },
   // Day 2 - BELLBOY. Meets them at the door, carries the bags, walks them up.
   2: {
@@ -1393,6 +1397,74 @@ export function arrivalTime(index, total, durationSec, random) {
   return Math.max(noonAt, noonAt + ((index - early) * span) / Math.max(1, after) + jitter());
 }
 
+/**
+ * THE 14:00 GUARANTEE, AND WHAT A LATE ROOM COSTS. Operator, after playtest:
+ *
+ *   "if the guests are here before 14:00 they still have to wait for their
+ *    check-in until 14:00 the countdown must not start until then, after that
+ *    if there is 1 hour delay they get less satisfaction and if its 2-3 hours
+ *    they can choose to change the hotel and loose money for relocation and
+ *    loose more satisfaction."
+ *
+ * THIS IS THE GUARANTEE BOUNDARY, FINALLY DOING SOMETHING. `reality-check` was
+ * right that 14:00 must not GATE a check-in - a room that is free and clean can
+ * be given to an early guest, and that still earns its small satisfaction. What
+ * 14:00 gates is the guest's PATIENCE. Before it the hotel owes them nothing, so
+ * nothing is ticking and standing in the lobby at 11:00 costs the player nothing.
+ * From 14:00 the hotel is late, and it is late by the clock.
+ *
+ * That is why an early arrival is now worth generating rather than a hazard: the
+ * lobby fills through the morning and the bill for it all comes due at once at
+ * 14:00, which is exactly the operator's "12:00-14:00 is the busiest and most
+ * fragile part of the day".
+ *
+ * THE LADDER, in in-game hours past 14:00 (or past arrival, for a guest who
+ * turns up later than that):
+ *
+ *   0 - 1h    the grace. Nothing is owed and nothing is lost.
+ *   1h+       kept waiting. Satisfaction bleeds, the longer the worse.
+ *   2 - 3h    they take it elsewhere. WE pay to relocate them, and it hurts
+ *             the rating far more than making them wait did.
+ *
+ * The hour they give up is drawn per guest inside that window, because "2-3
+ * hours" is a real spread and a fixed number would teach the player a stopwatch
+ * rather than a risk.
+ */
+export const WAIT_LADDER = {
+  /** The hour the hotel's promise starts. Check-in is FROM 14:00. */
+  guaranteeHour: 14,
+  /** Hours of lateness a guest shrugs off. */
+  graceHours: 1,
+  /** They start looking elsewhere somewhere in this window. */
+  leaveAfterHours: { min: 2, max: 3 },
+  /** Satisfaction per in-game hour kept waiting past the grace. */
+  satisfactionPerHour: 5,
+};
+
+/** Real seconds one in-game hour lasts on this day. */
+export function hourSeconds(shift) {
+  const span = OPERATING_WINDOW.to - OPERATING_WINDOW.from;
+  return shift.config.durationSec / span;
+}
+
+/** The shift-time at which a given in-game hour falls. */
+export function timeOfHour(shift, hour) {
+  return (hour - OPERATING_WINDOW.from) * hourSeconds(shift);
+}
+
+/**
+ * When THIS guest's patience starts running: not before the hotel has promised
+ * them anything. An early arrival waits for free until 14:00.
+ */
+export function patienceStartsAt(shift, arrivedAt) {
+  return Math.max(arrivedAt, timeOfHour(shift, WAIT_LADDER.guaranteeHour));
+}
+
+/** Whether this day teaches the wait ladder at all. Day 1 does not - see ONBOARDING_DAYS. */
+export function teachesWaiting(shift) {
+  return shift.config.waitLadder !== false;
+}
+
 export function createShift(level, seed, options = {}) {
   const { roster = null, price = null, rating = 3.5 } = options;
   const base = levelConfig(level);
@@ -1625,6 +1697,10 @@ export function createShift(level, seed, options = {}) {
     tipsGiven: 0, escortsDone: 0, tookOver: 0, nightsSold: 0, checkouts: 0,
     /** Favours asked by guests already upstairs. See GUEST_REQUEST_RATE. */
     requests: 0, requestsDone: 0,
+    /** In-game hours guests spent waiting past the 14:00 grace. See WAIT_LADDER. */
+    hoursKeptWaiting: 0,
+    /** Guests who gave up and went to another hotel, at our expense. */
+    relocatedByWait: 0,
     /**
      * Free rooms per night, `[0]` being tonight. The day's running view of the
      * forward book - a whole Calendar cloned on every tick would be far too
@@ -1677,6 +1753,31 @@ function addTask(shift, type, {
     claimedBy: null, doneAt: null, expired: false,
   };
   shift.tasks.push(task);
+  return task;
+}
+
+/**
+ * A guest at the desk waiting for a room. See WAIT_LADDER.
+ *
+ * The deadline is measured from when the hotel's PROMISE starts, not from when
+ * the guest walked in, so an early arrival costs nothing until 14:00. On a day
+ * that does not teach the ladder yet (day 1) this is the old flat patience.
+ */
+function addCheckIn(shift, guest) {
+  if (!teachesWaiting(shift)) {
+    return addTask(shift, TASK.CHECK_IN, {
+      guestId: guest.id, expiresIn: shift.config.patienceSec,
+    });
+  }
+  const hour = hourSeconds(shift);
+  const from = patienceStartsAt(shift, shift.time);
+  const { min, max } = WAIT_LADDER.leaveAfterHours;
+  const leaveAfter = min + nextRandom(shift) * (max - min);
+  const task = addTask(shift, TASK.CHECK_IN, { guestId: guest.id, expiresIn: null });
+  /** When the hotel starts owing this guest a room. */
+  task.dueFrom = from;
+  /** They give up here - relocation, not a shrug. */
+  task.expiresAt = from + leaveAfter * hour;
   return task;
 }
 
@@ -2151,6 +2252,34 @@ export function tick(shift, dt) {
     }
   }
 
+  /**
+   * --- KEPT WAITING PAST THE GUARANTEE. See WAIT_LADDER.
+   *
+   * Satisfaction bleeds by the in-game HOUR, not per tick, so the cost is the
+   * same whether the day is 120 seconds or ten minutes long - it is measured in
+   * the hotel's time, which is the only time the guest experiences.
+   */
+  if (teachesWaiting(next)) {
+    const hour = hourSeconds(next);
+    for (const task of next.tasks) {
+      if (task.type !== TASK.CHECK_IN || task.doneAt !== null) continue;
+      if (task.dueFrom === undefined || next.time < task.dueFrom) continue;
+      const lateHours = (next.time - task.dueFrom) / hour;
+      if (lateHours < WAIT_LADDER.graceHours) continue;
+      // COUNTED FROM THE END OF THE GRACE, so the first hit lands exactly on
+      // "1 hour delay" as the operator described it, and every further whole
+      // hour costs again. Counting whole hours of the CLOCK instead would put
+      // the first one at two hours late and quietly halve the rule.
+      const due = Math.floor(lateHours - WAIT_LADDER.graceHours) + 1;
+      const owed = due - (task.hoursCharged ?? 0);
+      if (owed <= 0) continue;
+      task.hoursCharged = due;
+      next.satisfaction = Math.max(0,
+        next.satisfaction - owed * WAIT_LADDER.satisfactionPerHour);
+      next.hoursKeptWaiting = (next.hoursKeptWaiting ?? 0) + owed;
+    }
+  }
+
   // --- deadlines
   for (const task of next.tasks) {
     if (task.doneAt !== null || task.claimedBy !== null) continue;
@@ -2158,6 +2287,26 @@ export function tick(shift, dt) {
       task.doneAt = next.time;
       task.expired = true;
       next.missed += 1;
+      /**
+       * A GUEST WHO GAVE UP ON A ROOM GOES TO ANOTHER HOTEL, AND WE PAY FOR IT.
+       *
+       * The operator: "if its 2-3 hours they can choose to change the hotel and
+       * loose moned for relocation and loose more satisfaction." A relocation is
+       * not a shrug - it is the desk phoning round, the taxi, and the rate
+       * difference, which is why it already has a price in OVERBOOK_PENALTY.
+       * Being slow now costs what overselling costs, because to the guest
+       * standing there it is the same failure.
+       */
+      if (task.type === TASK.CHECK_IN && teachesWaiting(next)) {
+        next.walkedOut += 1;
+        next.relocatedByWait = (next.relocatedByWait ?? 0) + 1;
+        next.money -= OVERBOOK_PENALTY.money;
+        next.satisfaction = Math.max(0,
+          next.satisfaction - OVERBOOK_PENALTY.satisfaction);
+        const waiting = next.guests.find((g) => g.id === task.guestId);
+        if (waiting) waiting.state = "relocated";
+        continue;
+      }
       next.satisfaction = Math.max(0, next.satisfaction - (EXPIRY_PENALTY[task.type] ?? 4));
       if (task.type === TASK.CHECK_IN) next.walkedOut += 1;
       // A guest who gave up waiting to check out still LEFT. Release the room,
@@ -2268,7 +2417,7 @@ export function tick(shift, dt) {
       nights: reservation.nights ?? 1, guests: reservation.guests ?? 2,
     };
     next.guests.push(guest);
-    addTask(next, TASK.CHECK_IN, { guestId: guest.id, expiresIn: next.config.patienceSec });
+    addCheckIn(next, guest);
   }
 
   /**
@@ -2318,7 +2467,7 @@ export function tick(shift, dt) {
       };
       next.guests.push(guest);
       next.walkIns += 1;
-      addTask(next, TASK.CHECK_IN, { guestId: guest.id, expiresIn: next.config.patienceSec });
+      addCheckIn(next, guest);
     }
   }
 
@@ -2495,6 +2644,9 @@ export function score(shift) {
     walkedOut: shift.walkedOut,
     missed: shift.missed,
     overbooked: shift.overbooked,
+    /** See WAIT_LADDER - guests lost to a late room, and hours of lateness. */
+    relocatedByWait: shift.relocatedByWait ?? 0,
+    hoursKeptWaiting: shift.hoursKeptWaiting ?? 0,
     walkIns: shift.walkIns,
     bookingsTaken: shift.bookingsTaken,
     stars: shift.stars,

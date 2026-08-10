@@ -869,6 +869,13 @@ export function createProperty(now, options = {}) {
      */
     lastSettledDay: options.lastSettledDay ?? 0,
     /**
+     * The highest day already PAID IN EXPERIENCE. Deliberately separate from
+     * `lastSettledDay`: the money for a day can be banked by the offline path
+     * while the player was in fact at the desk, and they are still owed the
+     * experience for having worked it. See awardWorkedDay in game.js.
+     */
+    lastAwardedDay: options.lastAwardedDay ?? 0,
+    /**
      * THE FORWARD BOOK. Reservations for days that have not happened yet, which
      * is what makes the reservations department a job rather than a coin flip.
      * Stored as plain JSON; `bookOf` hands back a real Calendar.
@@ -1345,7 +1352,11 @@ export function withRank(property, progression) {
  */
 export function awardDay(property, result) {
   const rank = rankOf(property);
-  const gained = rank.award(dayExperience(result));
+  // The roster decides which work the OWNER is still paid experience for - see
+  // dayExperience. A desk you employ somebody to hold is not your rank any more.
+  const gained = rank.award(dayExperience(result, {
+    staffed: (property.roster ?? []).map((person) => person.role),
+  }));
   const before = rank.level;
   const promoted = rank.promote(property);
   return {
@@ -1503,6 +1514,7 @@ export function deserialize(text, now) {
       ? saved.book : { horizon: BOOK_HORIZON, bookings: [] },
     clock: saved.clock ?? new Clock({ startedAt: saved.openedAt ?? now, day: 1 }).toJSON(),
     lastSettledDay: saved.lastSettledDay ?? 0,
+    lastAwardedDay: saved.lastAwardedDay ?? 0,
   };
 
   // SAVE MIGRATION. Every save written before today has a room COUNT and no

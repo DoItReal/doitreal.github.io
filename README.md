@@ -1,6 +1,6 @@
 # Hotel Career - prototype, in development
 
-**Play it: https://doitreal.github.io/hotel-career/**
+**Play it: https://doitreal.github.io/**
 
 You own a one-star hotel and work the front desk yourself. Check guests in,
 check them out, and learn every job on the way to running the place.
