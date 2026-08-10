@@ -252,6 +252,60 @@ function toast(message, ms = 1700) {
   toast.timer = setTimeout(() => node.classList.remove("show"), ms);
 }
 
+/* ------------------------------------------------------------- panels -- */
+/**
+ * OPENING A PANEL STOPS THE HOTEL. CLOSING IT HAS TO START IT AGAIN.
+ *
+ * THE BUG THIS FIXES, found by `game-designer` and confirmed in source: nine
+ * places set `state.paused = true` when a sheet opens and **not one close
+ * handler ever set it back**. The only three sites that cleared it were starting
+ * a shift, the away card and the end-of-day card. So looking at your rooms and
+ * closing the sheet left the hotel frozen behind a button labelled "Resume" that
+ * nothing pointed at - and the longer the player explored, the more of their day
+ * they lost without being told. On a phone, where the sheets ARE the navigation,
+ * that is the whole of navigation broken.
+ *
+ * IT RESTORES, IT DOES NOT RESUME. A player who paused deliberately and then
+ * opened a sheet must still be paused when they close it, so the state from
+ * before the first panel opened is what comes back. That is also why the flag is
+ * cleared only when the LAST panel closes: sheets can open sheets.
+ *
+ * Pausing on open is deliberate and stays - it is what makes it safe to read a
+ * screen mid-day, and on day 1 it is the only reason a player can look around
+ * without losing a guest.
+ */
+const PANELS = [
+  "star-veil", "build-veil", "rooms-veil", "book-veil", "report-veil",
+  "fnb-veil", "price-veil", "lvl-veil", "staff-veil",
+];
+
+/** What `paused` was before the first panel opened, or null if none is open. */
+let pausedBeforePanel = null;
+
+/** One place that owns the flag AND the button, which used to be set apart. */
+function setPaused(value) {
+  state.paused = value;
+  el("pause").textContent = value ? "Resume" : "Pause";
+  if (!value) state.lastFrame = performance.now();
+}
+
+function anyPanelOpen() {
+  return PANELS.some((id) => el(id).classList.contains("show"));
+}
+
+function openPanel(id) {
+  if (!anyPanelOpen()) pausedBeforePanel = state.paused;
+  el(id).classList.add("show");
+  setPaused(true);
+}
+
+function closePanel(id) {
+  el(id).classList.remove("show");
+  if (anyPanelOpen()) return;
+  setPaused(pausedBeforePanel ?? false);
+  pausedBeforePanel = null;
+}
+
 /**
  * A wait, in the shortest honest form. Building work is measured in real hours,
  * so "6h 20m" has to read at a glance from the floor without doing arithmetic.
@@ -523,7 +577,7 @@ function startShift(level) {
     ...options,
     price: config.pricingEnabled ? state.price : null,
   });
-  state.paused = false;
+  setPaused(false);
   state.startedAt = Date.now();
   state.lastFrame = performance.now();
   localStorage.setItem(KEY_LEVEL, String(level));
@@ -1499,8 +1553,7 @@ function endShift(dayWorked = null) {
    */
   if (award.promoted) {
     el("end-veil").classList.add("show");
-    state.paused = true;
-    el("pause").textContent = "Resume";
+    setPaused(true);
   } else {
     const arrow = result.profit >= 0 ? "+" : "-";
     toast(`Day ${workedDay} closed ${arrow}$${Math.abs(result.profit)}.`);
@@ -1907,11 +1960,9 @@ function renderStarSheet() {
 
 el("starbtn").addEventListener("click", () => {
   renderStarSheet();
-  el("star-veil").classList.add("show");
-  state.paused = true;
-  el("pause").textContent = "Resume";
+  openPanel("star-veil");
 });
-el("star-close").addEventListener("click", () => el("star-veil").classList.remove("show"));
+el("star-close").addEventListener("click", () => closePanel("star-veil"));
 
 /* --------------------------------------------------------------- build -- */
 /**
@@ -2092,9 +2143,7 @@ function collectFinishedWork(announce = true) {
 el("buildbtn").addEventListener("click", () => {
   collectFinishedWork();
   renderBuildSheet();
-  el("build-veil").classList.add("show");
-  state.paused = true;
-  el("pause").textContent = "Resume";
+  openPanel("build-veil");
   clearInterval(buildTimer);
   buildTimer = setInterval(() => {
     collectFinishedWork();
@@ -2103,7 +2152,7 @@ el("buildbtn").addEventListener("click", () => {
 });
 
 el("build-close").addEventListener("click", () => {
-  el("build-veil").classList.remove("show");
+  closePanel("build-veil");
   clearInterval(buildTimer);
   buildTimer = null;
 });
@@ -2421,13 +2470,11 @@ function renderRoomsSheet() {
 
 el("rooms").addEventListener("click", () => {
   renderRoomsSheet();
-  el("rooms-veil").classList.add("show");
-  state.paused = true;
-  el("pause").textContent = "Resume";
+  openPanel("rooms-veil");
 });
 
 el("rooms-close").addEventListener("click", () => {
-  el("rooms-veil").classList.remove("show");
+  closePanel("rooms-veil");
 });
 
 /* ---------------------------------------------------------------- book -- */
@@ -2544,13 +2591,11 @@ function renderBookSheet() {
 
 el("book").addEventListener("click", () => {
   renderBookSheet();
-  el("book-veil").classList.add("show");
-  state.paused = true;
-  el("pause").textContent = "Resume";
+  openPanel("book-veil");
 });
 
 el("book-close").addEventListener("click", () => {
-  el("book-veil").classList.remove("show");
+  closePanel("book-veil");
 });
 
 /* -------------------------------------------------------------- reports -- */
@@ -2717,23 +2762,19 @@ el("report-sheet").addEventListener("click", (event) => {
 
 /** Today's own P&L, per department. Tapping the Today figure opens it. */
 el("today").addEventListener("click", () => {
-  if (!state.shift) { renderReports(); el("report-veil").classList.add("show"); return; }
+  if (!state.shift) { renderReports(); openPanel("report-veil"); return; }
   const r = score(state.shift);
   reportToday = r;
   renderReports();
-  el("report-veil").classList.add("show");
-  state.paused = true;
-  el("pause").textContent = "Resume";
+  openPanel("report-veil");
 });
 
 el("bank").addEventListener("click", () => {
   reportToday = null;
   renderReports();
-  el("report-veil").classList.add("show");
-  state.paused = true;
-  el("pause").textContent = "Resume";
+  openPanel("report-veil");
 });
-el("report-close").addEventListener("click", () => el("report-veil").classList.remove("show"));
+el("report-close").addEventListener("click", () => closePanel("report-veil"));
 
 el("report-export").addEventListener("click", () => {
   const json = exportLedger(state.property.ledger, {
@@ -2754,13 +2795,11 @@ el("report-export").addEventListener("click", () => {
 
 el("fnbbtn").addEventListener("click", () => {
   renderFnbSheet();
-  el("fnb-veil").classList.add("show");
-  state.paused = true;
-  el("pause").textContent = "Resume";
+  openPanel("fnb-veil");
 });
 
 el("fnb-close").addEventListener("click", () => {
-  el("fnb-veil").classList.remove("show");
+  closePanel("fnb-veil");
 });
 
 el("fnb-sheet").addEventListener("input", (event) => {
@@ -2915,8 +2954,7 @@ function showAwayCard(report, completed) {
 
 el("away-ok").addEventListener("click", () => {
   el("away-veil").classList.remove("show");
-  state.paused = false;
-  el("pause").textContent = "Pause";
+  setPaused(false);
   state.lastFrame = performance.now();
   render();
 });
@@ -2981,8 +3019,7 @@ function returnToProperty() {
       days_rolled: timeline.daysRolled,
       builds_finished: built.completed.length,
     });
-    state.paused = true;
-    el("pause").textContent = "Resume";
+    setPaused(true);
     showAwayCard(back.offline, back.completed);
   }
   // A new day while we were away means a new day to work. Open the floor for
@@ -3164,12 +3201,10 @@ el("pricebtn").addEventListener("click", () => {
   }
   renderPricePanel();
   renderPolicyControl();
-  el("price-veil").classList.add("show");
-  state.paused = true;
-  el("pause").textContent = "Resume";
+  openPanel("price-veil");
 });
 el("price-ok").addEventListener("click", () => {
-  el("price-veil").classList.remove("show");
+  closePanel("price-veil");
   localStorage.setItem(KEY_PRICE, String(state.price));
   analytics.track("price_set", { level: state.level, price: state.price });
   // Applies to the day already running rather than restarting it. Restarting
@@ -3223,24 +3258,20 @@ function renderLevelPicker() {
 
 el("lvlbtn").addEventListener("click", () => {
   renderProgressSheet();
-  el("lvl-veil").classList.add("show");
-  state.paused = true;
-  el("pause").textContent = "Resume";
+  openPanel("lvl-veil");
 });
-el("lvl-close").addEventListener("click", () => el("lvl-veil").classList.remove("show"));
+el("lvl-close").addEventListener("click", () => closePanel("lvl-veil"));
 el("lvl-grid").addEventListener("click", (event) => {
   const row = event.target.closest("[data-level]");
   if (!row) return;
-  el("lvl-veil").classList.remove("show");
+  closePanel("lvl-veil");
   startShift(Number(row.dataset.level));
 });
 
 el("staffbtn").addEventListener("click", () => {
   collectFinishedWork();
   renderStaffSheet();
-  el("staff-veil").classList.add("show");
-  state.paused = true;
-  el("pause").textContent = "Resume";
+  openPanel("staff-veil");
   clearInterval(staffTimer);
   staffTimer = setInterval(() => {
     collectFinishedWork();
@@ -3248,7 +3279,7 @@ el("staffbtn").addEventListener("click", () => {
   }, 1000);
 });
 el("staff-close").addEventListener("click", () => {
-  el("staff-veil").classList.remove("show");
+  closePanel("staff-veil");
   clearInterval(staffTimer);
   staffTimer = null;
 });
@@ -3266,11 +3297,7 @@ el("hint").addEventListener("click", () => {
   analytics.track("hint_used", { level: state.level, type: suggestion.type });
 });
 
-el("pause").addEventListener("click", () => {
-  state.paused = !state.paused;
-  el("pause").textContent = state.paused ? "Resume" : "Pause";
-  state.lastFrame = performance.now();
-});
+el("pause").addEventListener("click", () => setPaused(!state.paused));
 
 /**
  * There is no "next shift" any more, because there is no next shift to pick -
@@ -3280,8 +3307,7 @@ el("pause").addEventListener("click", () => {
 el("end-next").addEventListener("click", () => {
   el("end-veil").classList.remove("show");
   state.shift = null;
-  state.paused = false;
-  el("pause").textContent = "Pause";
+  setPaused(false);
   render();
 });
 el("end-retry").addEventListener("click", () => {
@@ -3385,10 +3411,7 @@ window.addEventListener("pagehide", () => {
  */
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
-    if (state.shift && !state.shift.over) {
-      state.paused = true;
-      el("pause").textContent = "Resume";
-    }
+    if (state.shift && !state.shift.over) setPaused(true);
     state.property = touchProperty(state.property, Date.now());
     saveProperty();
     return;
@@ -3526,10 +3549,7 @@ requestAnimationFrame(frame);
 if (localStorage.getItem(KEY_TUT)) {
   beginDay();
   // startShift unpauses; if the return card is up, the floor waits behind it.
-  if (el("away-veil").classList.contains("show")) {
-    state.paused = true;
-    el("pause").textContent = "Resume";
-  }
+  if (el("away-veil").classList.contains("show")) setPaused(true);
 } else {
   introBeat = 0;
   paintIntro();
