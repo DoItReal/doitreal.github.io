@@ -890,6 +890,51 @@ export const TASK_ENERGY = {
   [TASK.PREP]: 7,
 };
 
+/**
+ * EXPERIENCE PER JOB DONE, PAID THE MOMENT IT IS DONE.
+ *
+ * Operator: "the experience and the rewards must be in real-time not awarded in
+ * the end of the day/shift. You do something, you earn experience, you check-in
+ * you get money and etc.."
+ *
+ * Money already worked this way - every payment goes into the till as the guest
+ * pays. Experience did not: it was computed once at settle from the day's
+ * totals, so an hour of work showed nothing until midnight. Now the work pays as
+ * you do it, and the day's RESULT (the rating it earned, the profit it turned)
+ * still adds its bonus at settle - see dayExperience. Two different things: what
+ * you did, and how the business did.
+ *
+ * Weighted so the jobs a rank is actually about are worth the most. A check-in
+ * is the front desk's whole purpose; a night-prep job is quiet, unhurried and
+ * pays accordingly.
+ */
+export const TASK_XP = {
+  [TASK.CHECK_IN]: 6,
+  [TASK.CHECK_OUT]: 5,
+  [TASK.ESCORT]: 4,
+  [TASK.CLEAN]: 5,
+  [TASK.REPAIR]: 6,
+  [TASK.PHONE]: 5,
+  [TASK.BED]: 3,
+  [TASK.REQUEST]: 3,
+  [TASK.PREP]: 2,
+};
+
+/**
+ * THE JOBS THAT COUNT TOWARD UNLOCKING A DEPARTMENT. See domain/Unlocks.js.
+ * Keyed by task, valued by the counter the career tracker keeps.
+ */
+export const CAREER_COUNTER = {
+  [TASK.CHECK_IN]: "checkIns",
+  [TASK.CHECK_OUT]: "checkOuts",
+  [TASK.ESCORT]: "escorts",
+  [TASK.CLEAN]: "cleans",
+  [TASK.REPAIR]: "repairs",
+  [TASK.PHONE]: "calls",
+  [TASK.REQUEST]: "requests",
+  [TASK.PREP]: "preps",
+};
+
 export const TASK_REWARD = {
   // The room is charged at the rate YOU set - see shift.roomRate - not a constant.
   [TASK.CHECK_IN]: { money: 0, satisfaction: 0 },
@@ -1750,6 +1795,12 @@ export function createShift(level, seed, options = {}) {
     tipsGiven: 0, escortsDone: 0, tookOver: 0, nightsSold: 0, checkouts: 0,
     /** Favours asked by guests already upstairs. See GUEST_REQUEST_RATE. */
     requests: 0, requestsDone: 0,
+    /**
+     * EXPERIENCE EARNED ON THE FLOOR SO FAR TODAY, and the jobs behind it.
+     * `game.js` pushes both into the property as they happen - see syncCareer.
+     */
+    experience: 0,
+    career: {},
     /** Night-shift jobs done tonight, and the ones done LAST night. See NIGHT_PREP. */
     prepDone: 0,
     preppedFor: Math.max(0, Math.round(options.preppedFor ?? 0)),
@@ -2069,6 +2120,18 @@ function releaseRoom(shift, room) {
 
 function completeTask(shift, task, worker) {
   task.doneAt = shift.time;
+
+  /**
+   * PAID THE MOMENT IT IS DONE, and only for work the PLAYER did. Staff doing
+   * their own job is the hotel running, not the owner learning it - and paying
+   * the owner for it is exactly what `dayExperience` stopped doing when the desk
+   * is staffed. The two rules have to agree or hiring becomes a way to farm.
+   */
+  if (worker === "player") {
+    shift.experience += TASK_XP[task.type] ?? 0;
+    const counter = CAREER_COUNTER[task.type];
+    if (counter) shift.career[counter] = (shift.career[counter] ?? 0) + 1;
+  }
 
   // Stock is consumed by the WORK, not by the guest, so it is charged here -
   // a room turned for nobody still costs a set of linen.
@@ -2769,6 +2832,9 @@ export function score(shift) {
     /** See WAIT_LADDER - guests lost to a late room, and hours of lateness. */
     relocatedByWait: shift.relocatedByWait ?? 0,
     hoursKeptWaiting: shift.hoursKeptWaiting ?? 0,
+    /** Experience earned by working, already banked live. See TASK_XP. */
+    experience: shift.experience ?? 0,
+    career: { ...(shift.career ?? {}) },
     /** Night-shift jobs done, which the property carries into tomorrow. */
     prepDone: shift.prepDone ?? 0,
     prepUsed: shift.prepUsed ?? 0,

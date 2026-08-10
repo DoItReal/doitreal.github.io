@@ -53,25 +53,25 @@ export const XP = {
 /**
  * Experience a settled day is worth, from the numbers that day produced.
  *
- * THE OWNER IS NOT PAID FOR A JOB THEY EMPLOY SOMEBODY TO DO. Operator, after
- * playtest: "The experience for the job must not be for the owner (the player)
- * it must be mainly for the staff."
+ * THIS IS THE BUSINESS RESULT ONLY - what the hotel did, not what you did.
  *
- * So `XP.CHECK_IN` - the one task-shaped term in here - stops counting once a
- * receptionist is on the payroll. Everything else is the BUSINESS result: nights
- * sold, the rating, the profit, surviving the day. Those are the owner's to earn
- * however the work got done, and they are what a rank should actually measure.
+ * The work itself is paid AS IT HAPPENS now, per job, by `TASK_XP` in engine.js.
+ * The operator: "You do something, you earn experience." So the task-shaped term
+ * that used to live here is gone, or the same check-in would be paid twice - once
+ * at the desk and again at midnight.
  *
- * @param {object} options `staffed` - roles the player employs.
+ * What is left is the half a rank should actually measure and that no single tap
+ * can produce: nights sold, the rating earned, the profit turned, and a small
+ * amount for surviving the day at all.
+ *
+ * `options.staffed` is retained because callers pass it and a future rule may
+ * want it; it no longer changes the result.
  */
 export function dayExperience(result, options = {}) {
   const rating = result.rating ?? 0;
-  const staffed = new Set(options.staffed ?? []);
-  const deskIsCovered = staffed.has("reception");
   return Math.max(0, Math.round(
     XP.DAY_SETTLED
     + (result.nightsSold ?? 0) * XP.NIGHT_SOLD
-    + (deskIsCovered ? 0 : (result.checkedIn ?? 0) * XP.CHECK_IN)
     + rating * XP.REVIEW_STAR
     + Math.max(0, (result.profit ?? 0) / 100) * XP.PROFIT_PER_100
     + (result.upsells ?? 0) * XP.UPSELL

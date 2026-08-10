@@ -50,6 +50,9 @@ import { duration as scaledDuration, trainingDuration } from "./domain/Timers.js
 import {
   BOOK_HORIZON, fillBook, rollBook, seedOpeningGuests,
 } from "./domain/Bookings.js";
+import {
+  DEPARTMENT_GOALS, emptyCareer, isUnlocked, nextDepartment, unlockProgress,
+} from "./domain/Unlocks.js";
 
 /* ------------------------------------------------------------- building -- */
 
@@ -348,12 +351,20 @@ export function hireBlocker(property, role) {
       ? `You already employ ${employed}. That is as many as the outlet can use.`
       : "That department is already staffed.";
   }
-  // YOU DO NOT HAVE TO HAVE COOKED TO HIRE A COOK. The "work it yourself first"
-  // rule exists so a level-1 player cannot buy past the levels that teach the
-  // game - and every one of those levels is a rooms-side job. An owner hires a
-  // chef; they never train as one, and the career ladder never offers it.
-  if (!isFnbRole(role) && !(property.learnedRoles || []).includes(role)) {
-    return "Work that job yourself before you hire for it.";
+  /**
+   * YOU OPEN A DEPARTMENT BY DOING ITS WORK. See domain/Unlocks.js.
+   *
+   * This used to be `learnedRoles.includes(role)` - a list the player never saw,
+   * filled in by the ladder rather than by them. The operator could not tell what
+   * would open the next department and ended up using the dev panel to force it.
+   * Now the condition is a goal with a number on it: ten check-ins and $300 for
+   * the receptionist, and so on. The blocker text IS the instruction.
+   *
+   * F&B is exempt, as before: an owner hires a chef, they never train as one.
+   */
+  if (!isFnbRole(role)) {
+    const progress = unlockProgress(property.career, role);
+    if (!progress.met) return progress.gaps.map((g) => g.text).join(", ");
   }
   const fee = recruitmentFee(role);
   if (spendable(property) < fee) return `Costs $${fee}; you hold $${spendable(property)}.`;
@@ -404,6 +415,28 @@ export function openPositions(property) {
  * ROOMS-SIDE ONLY. F&B trades follow the OUTLET, not the career ladder - there
  * is no point telling a hotel with no bar that it cannot employ a bartender.
  */
+/** Re-exported so callers have one import for "what opens a department". */
+export { DEPARTMENT_GOALS, unlockProgress, isUnlocked, nextDepartment };
+
+/**
+ * Bank experience and the jobs behind it, as they happen. Returns a NEW property.
+ * `game.js` calls this every frame with the deltas since the last call.
+ */
+export function recordWork(property, { experience = 0, career = {}, profit = 0 } = {}) {
+  if (!experience && !profit && Object.keys(career).length === 0) return property;
+  const next = copy(property);
+  const rank = rankOf(next);
+  if (experience) rank.award(experience);
+  const banked = { ...emptyCareer(), ...(next.career ?? {}) };
+  for (const [key, value] of Object.entries(career)) {
+    banked[key] = (banked[key] ?? 0) + value;
+  }
+  banked.profit = Math.max(0, (banked.profit ?? 0) + profit);
+  next.career = banked;
+  next.progression = rank.toJSON();
+  return next;
+}
+
 export function lockedDepartments(property) {
   const level = rankOf(property).level;
   const learned = property.learnedRoles || [];
@@ -882,6 +915,13 @@ export function createProperty(now, options = {}) {
      */
     preppedFor: options.preppedFor ?? 0,
     /**
+     * WHAT THE PLAYER HAS ACTUALLY DONE, counted as they do it. This is what
+     * opens departments - see domain/Unlocks.js - and it is updated live from
+     * the floor rather than at settle, because a goal you cannot watch move is
+     * not a goal.
+     */
+    career: { ...emptyCareer(), ...(options.career ?? {}) },
+    /**
      * THE FORWARD BOOK. Reservations for days that have not happened yet, which
      * is what makes the reservations department a job rather than a coin flip.
      * Stored as plain JSON; `bookOf` hands back a real Calendar.
@@ -1218,12 +1258,19 @@ export function applyCareerBaseline(property, baselineRooms, roles = [], ownerRo
     setHouse(next, house);
     next.baselineRooms = baselineRooms;
   }
-  const have = new Set(next.roster.map((person) => person.role));
-  for (const role of roles) {
-    if (have.has(role)) continue;
-    next.roster.push({ role, tier: 1 });
-    have.add(role);
-  }
+  /**
+   * A PROMOTION NO LONGER HANDS YOU FREE STAFF.
+   *
+   * It used to push a fresh hire onto the roster for every role the rank's
+   * config listed, so reaching a rank silently staffed the department below it -
+   * the operator: "unlocks and hires auto the next staff unlocked". That made
+   * the one decision the career is about (who to hire, and when you can afford
+   * them) into something the game did for you while you were not looking.
+   *
+   * The rank still governs how many people you MAY employ - `staffCap` - and the
+   * department goals govern when the position opens. Filling it is a purchase
+   * the player makes.
+   */
   return next;
 }
 
@@ -1522,6 +1569,7 @@ export function deserialize(text, now) {
     lastSettledDay: saved.lastSettledDay ?? 0,
     lastAwardedDay: saved.lastAwardedDay ?? 0,
     preppedFor: saved.preppedFor ?? 0,
+    career: { ...emptyCareer(), ...(saved.career ?? {}) },
   };
 
   // SAVE MIGRATION. Every save written before today has a room COUNT and no

@@ -107,7 +107,10 @@
   main{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
   .jobshead{display:flex;align-items:baseline;gap:6px;font-size:10.5px;color:var(--muted);
     text-transform:uppercase;letter-spacing:.07em;flex:none}
-  .jobs{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;
+  /* The jobs list must keep its height when the crew strip appears after the
+     first hire - it was collapsing to a couple of rows. A real floor is mostly
+     the job list. (Cosmetic: the UI is being replaced by a Godot build.) */
+  .jobs{flex:1;min-height:38vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;
     background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px;
     box-shadow:var(--shadow);scrollbar-width:thin}
   .job{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:11px;
@@ -161,7 +164,7 @@
   .empty{color:var(--muted);font-size:12.5px;text-align:center;padding:22px 10px}
 
   /* ---------- the crew ---------- */
-  .crew{display:flex;gap:6px;overflow-x:auto;flex:none;scrollbar-width:none}
+  .crew{max-height:18vh;overflow-y:auto;display:flex;gap:6px;overflow-x:auto;flex:none;scrollbar-width:none}
   .crew::-webkit-scrollbar{display:none}
   .member{flex:none;min-width:74px;background:var(--panel);border:1px solid var(--line);
     border-radius:10px;padding:6px 7px;transition:border-color .2s}

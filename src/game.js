@@ -30,7 +30,7 @@ import {
   buildProgress, buildRemainingSeconds, certification, createProperty, deserialize,
   REMOTE_TRAINING_MULTIPLIER, TRAINING, availableRoster, devFinishAll, devGrant, devRewind,
   devSeedDays, hire, hireBlocker, lockedDepartments, menuBand, menuPrice, openPositions,
-  recruitmentFee,
+  recordWork, unlockProgress, nextDepartment, recruitmentFee, withRank,
   setMenuPrice, staffCount,
   findStaff, maintenanceSpeedUpSeconds, open as openProperty, resume, roomsUnderConstruction,
   houseOf, describeHouse,
@@ -111,8 +111,8 @@ let saveProperty = function saveProperty() {
 }
 
 const state = {
-  /** Cash and card already pushed into the property from the running day. */
-  banked: { cash: 0, card: 0 },
+  /** Cash, card, experience and jobs already pushed into the property today. */
+  banked: { cash: 0, card: 0, experience: 0, career: {} },
   level: Math.min(loadNumber(KEY_LEVEL, 1), MAX_LEVEL),
   unlocked: Math.min(loadNumber(KEY_UNLOCKED, 1), MAX_LEVEL),
   /** Everything that survives a day: capital, the building, the payroll. */
@@ -423,6 +423,52 @@ function beginDay() {
  * till, card to the bank. `state.banked` is the high-water mark of what has
  * already been pushed, so a re-render or a pause can never bank it twice.
  */
+/**
+ * EXPERIENCE AND THE JOBS BEHIND IT, BANKED AS THEY HAPPEN.
+ *
+ * The operator: "the experience and the rewards must be in real-time not awarded
+ * in the end of the day/shift. You do something, you earn experience."
+ *
+ * Money already worked this way - see `syncTakings`, which pushes every payment
+ * into the till as the guest pays. Experience did not: it was computed once at
+ * settle, so an hour at the desk moved nothing on screen until midnight, and the
+ * department goals that depend on the work moved nothing either. That is why the
+ * only way to make progress happen was the dev panel.
+ *
+ * `state.banked` is the high-water mark of what has already been pushed, exactly
+ * as it is for cash, so a re-render or a pause can never bank the same job twice.
+ */
+function syncCareer() {
+  const shift = state.shift;
+  if (!shift) return;
+  const experience = Math.max(0, (shift.experience ?? 0) - state.banked.experience);
+  const career = {};
+  for (const [key, total] of Object.entries(shift.career ?? {})) {
+    const delta = total - (state.banked.career[key] ?? 0);
+    if (delta > 0) career[key] = delta;
+  }
+  if (!experience && Object.keys(career).length === 0) return;
+
+  const before = rankOf(state.property).level;
+  state.property = recordWork(state.property, { experience, career });
+  state.banked.experience += experience;
+  for (const [key, delta] of Object.entries(career)) {
+    state.banked.career[key] = (state.banked.career[key] ?? 0) + delta;
+  }
+  // A promotion can now land mid-shift, which is the point of paying live.
+  const rank = rankOf(state.property);
+  if (rank.canPromote(state.property) && rank.promote(state.property)) {
+    state.property = withRank(state.property, rank);
+    state.level = rank.level;
+    state.unlocked = Math.max(state.unlocked, rank.level);
+    localStorage.setItem(KEY_LEVEL, String(rank.level));
+    localStorage.setItem(KEY_UNLOCKED, String(state.unlocked));
+    analytics.track("promotion", { from: before, to: rank.level });
+    toast(`Promoted: ${LEVELS[rank.level].title}`);
+    sound.done();
+  }
+}
+
 function syncTakings() {
   const shift = state.shift;
   if (!shift) return;
@@ -440,7 +486,7 @@ function syncTakings() {
 
 function startShift(level) {
   state.level = level;
-  state.banked = { cash: 0, card: 0 };
+  state.banked = { cash: 0, card: 0, experience: 0, career: {} };
   const config = levelConfig(level);
   // A promotion hands you a bigger house and another department. It adds to what
   // you have built; it never knocks a room down or sacks anybody.
@@ -688,6 +734,33 @@ function paintGoal() {
     bar.style.width = "100%";
     return;
   }
+  /**
+   * THE DEPARTMENT GOAL LEADS, because it is the one the player can go and do.
+   *
+   * Operator: "There must be some goals like 10 check-ins and 300$ profit to
+   * unlock receptionist, and is up to the player what he wants to do." A rank
+   * requirement is a consequence; a department goal is an instruction. So the
+   * line shows the nearest department you have not opened, and falls back to the
+   * rank once they are all open.
+   */
+  const staffed = (state.property.roster ?? []).map((person) => person.role);
+  const department = nextDepartment(state.property.career, staffed);
+  if (department && !department.met) {
+    label.textContent = `Open ${department.role}`;
+    need.textContent = department.gaps.map((g) => g.text).join("  -  ");
+    const work = department.gaps.find((g) => g.kind === "work");
+    bar.style.width = `${Math.max(0, Math.min(100, work
+      ? (work.have / work.need) * 100
+      : 100))}%`;
+    return;
+  }
+  if (department && department.met) {
+    label.textContent = `Hire a ${department.role}`;
+    need.textContent = "the goal is met - the position is open on the Staff screen";
+    bar.style.width = "100%";
+    return;
+  }
+
   const gaps = rank.blockers(state.property);
   label.textContent = `Next: ${next.title}`;
   need.textContent = gaps.length
@@ -1101,6 +1174,7 @@ function frame(now) {
   // breath. A modal at a natural boundary is an exit ramp - it is where players
   // quit, which is exactly why level-based games put one there.
   syncTakings();
+  syncCareer();
   if (after.over) { endShift(); beginDay(); }
   render();
 }
@@ -1264,6 +1338,10 @@ function endShift(dayWorked = null) {
    * the rest of the month.
    */
   state.property = { ...state.property, preppedFor: result.prepDone ?? 0 };
+  // Lifetime profit is the other half of every department goal. It is a DAY
+  // number - a day's takings minus a day's wages - so unlike the jobs it can
+  // only be known when the day closes.
+  state.property = recordWork(state.property, { profit: Math.max(0, result.profit) });
 
   // THE BOOKS. Every line of the day, itemised, before anything summarises it.
   state.property = recordTradingDay(state.property, result, {
@@ -2908,21 +2986,40 @@ const heartbeat = setInterval(() => {
   // on resume, so nothing is lost by simply not advancing here.
   if (state.paused) return;
   const before = clockOf(state.property).day;
+
+  /**
+   * CLOSE THE WORKED DAY BEFORE THE TIMELINE PRICES IT AS AN ABSENCE.
+   *
+   * ORDER IS THE WHOLE BUG, and it caused two symptoms that looked unrelated.
+   * `advanceTimeline` settles any day that rolled - as UNSUPERVISED, flagged
+   * `unmeasured: true`, at the offline rate. It used to run FIRST, so a day the
+   * player had actually worked went into the ledger as an absence:
+   *
+   *   - The player earned no experience for it (fixed separately, but this is
+   *     the reason it kept happening).
+   *   - `measuredNetPerDay` ignores unmeasured days, so with every worked day
+   *     recorded as an absence the hotel had NO measured earnings - and the
+   *     offline economy pays `netPerDay x factor`, which is zero times anything.
+   *     The operator: "this gives me 0$".
+   *
+   * So the shift is closed FIRST, banking the real day at its real profit and
+   * stamping `lastSettledDay`. `advanceTimeline` then skips it, because
+   * settlement is idempotent against exactly that mark.
+   */
+  const seen = state.property.lastSeenAt ?? Date.now();
+  const willRoll = (Date.now() - seen) / 1000 >= clockOf(state.property).secondsToDayEnd;
+  if (willRoll && state.shift && !state.shift.over) {
+    state.shift = { ...state.shift, over: true };
+    endShift(before);
+  }
+
   const timeline = advanceTimeline(state.property, Date.now(), { level: state.level });
   state.property = timeline.property;
   saveProperty();
   if (clockOf(state.property).day !== before) {
-    /**
-     * YOUR DAY ENDS WHEN THE CLOCK SAYS SO, whatever you were in the middle of.
-     *
-     * The floor only ticks while the tab is visible and unpaused, so it can fall
-     * behind the clock. When the day turns over underneath a running shift,
-     * that shift is the day that just ended: close it and bank it before
-     * opening the next one, or the work simply vanishes.
-     */
+    // Anything still open here worked a day the clock had already passed.
     if (state.shift && !state.shift.over) {
       state.shift = { ...state.shift, over: true };
-      // `before` - the clock has already rolled past the day this shift worked.
       endShift(before);
     }
     // A new trading day: roll the book with it, then say so - the rollover is
