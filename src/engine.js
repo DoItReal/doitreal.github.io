@@ -26,6 +26,7 @@
 // Clock.js imports nothing, so this direction is safe: engine.js -> Clock.js
 // closes no cycle. (Room.js is the one that cannot be imported here - see
 // ROOM_TYPE_RATE, which is duplicated for exactly that reason.)
+import { contentStage } from "./domain/Unlocks.js";
 import {
   GUARANTEE_HOUR, NIGHT_PREP_HOURS, OPENING_PREP_HOURS,
   acceptsWalkIns, arrivalTime, checkoutTime, hourAt as scheduleHourAt,
@@ -1224,6 +1225,101 @@ export function patienceMultiplier(day) {
   return ONBOARDING_PATIENCE[day] ?? 1;
 }
 
+/**
+ * THE TEACHING ARC, KEYED TO WHAT THE PLAYER HAS DONE.
+ *
+ * Operator, through day 9 of the deployed build: "the game doesnt care much
+ * about the goals to unlock more content. The content unlocks with the days
+ * passed somehow... this is real bug the content must be unlocked immidiately
+ * after completing the goal not after the time passed."
+ *
+ * He was right. `ONBOARDING_DAYS` below is keyed by DAY NUMBER, so bellboy work
+ * arrived on day 3 and maintenance on day 8-9 no matter how much of the job he
+ * had actually finished. These stages replace the calendar with his own work -
+ * see `CONTENT_GATES` in domain/Unlocks.js for the counts that open each one.
+ *
+ * A STAGE IS A BUNDLE OF TASKS *AND* THEIR SUPPLY, NEVER A TASK LIST ALONE.
+ * This is the rule we already broke once this week and it cost three days of
+ * teaching nothing: a REPAIR task type with `breakChance: 0` is an unlock that
+ * unlocks nothing, and every unit test passed while it was broken. So the rate
+ * that generates the work ships in the same object as the work.
+ *
+ * The values are the ones `ONBOARDING_DAYS` already carried, re-keyed from day
+ * number to stage number. Nothing here is a new constant, and the two UNVERIFIED
+ * figures keep their method notes on the day table below.
+ */
+export const CONTENT_STAGES = {
+  0: {
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT],
+    phoneCalls: 0, breakChance: 0, escortCarriesBags: false, waitLadder: false,
+  },
+  1: {
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT],
+    phoneCalls: 0, breakChance: 0, escortCarriesBags: true,
+  },
+  2: {
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN],
+    phoneCalls: 0, breakChance: 0, escortCarriesBags: true,
+  },
+  3: {
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR],
+    phoneCalls: 0, breakChance: 0.45, escortCarriesBags: true,
+  },
+  4: {
+    tasks: [TASK.CHECK_IN, TASK.CHECK_OUT, TASK.ESCORT, TASK.CLEAN, TASK.REPAIR, TASK.PHONE],
+    phoneCalls: 5, breakChance: 0.3, escortCarriesBags: true,
+  },
+  // Arc complete. The rank config governs from here - see levelConfig, which
+  // offers ALL_JOBS at every rank because the owner has no role.
+  5: null,
+};
+
+/**
+ * THE DAY ARC IS NOW A FLOOR, NOT A SCHEDULE.
+ *
+ * `game-designer`'s valve, and the reason this is safe to change at all. Gating
+ * content on the player's work alone has a mirror of the bug it fixes: a slow
+ * player, or one who simply does not chase the gates, sits on two task types for
+ * an hour. So the day arc survives as a LOWER BOUND - whatever the player has
+ * earned, they are never behind where the calendar would have put them.
+ *
+ * Today's measured arc therefore becomes the worst case rather than the plan,
+ * which is exactly the guarantee `docs/MEASURED-2026-08-10.md` bought and which
+ * must not be given back: content gated on RANK once taught nothing for three
+ * days straight while every unit test passed.
+ */
+export function backstopStage(day) {
+  if (!Number.isFinite(day)) return ARC_COMPLETE;
+  // Day 6 is where the teaching arc has always ended and the rank config takes
+  // over. Past it the floor is "complete", which imposes nothing.
+  if (day >= 6) return ARC_COMPLETE;
+  if (day >= 5) return 4;
+  return Math.max(0, Math.min(4, day - 1));
+}
+
+/** The arc is over and the rank config governs - see stageConfig. */
+export const ARC_COMPLETE = 5;
+
+/**
+ * The stage this day actually plays at: what the player EARNED, floored by the
+ * day so nobody falls behind the measured arc.
+ *
+ * NO CONTEXT MEANS NO OVERRIDE. A shift built with neither a day nor a career -
+ * every standalone shift, and most of the test suite - is not part of the
+ * teaching arc at all and must be governed by its rank, exactly as it was
+ * before the arc existed. Returning stage 0 there instead was worth twelve
+ * failing tests: it stripped every job type down to check-in and check-out.
+ */
+export function effectiveStage(career, day) {
+  if (career === undefined && !Number.isFinite(day)) return ARC_COMPLETE;
+  return Math.max(contentStage(career ?? {}), backstopStage(day));
+}
+
+/** The bundle for a stage, or nothing once the arc is complete. */
+export function stageConfig(stage) {
+  return CONTENT_STAGES[Math.max(0, Math.min(5, stage))] ?? null;
+}
+
 export const ONBOARDING_DAYS = {
   // Day 1 is check in and check OUT, and nothing else. The operator: "the main
   // goal of a hotel: have guests, check them in, and check them out." Escorting
@@ -1468,6 +1564,48 @@ let staffSeq = 0;
  *
  * Returns a NEW shift, like everything else in this file.
  */
+/**
+ * THE ARC MOVED WHILE THE DAY WAS RUNNING. Open the new work now.
+ *
+ * Operator: "the content must be unlocked immidiately after completing the goal
+ * not after the time passed." The running shift holds the config it was built
+ * with, so without this a gate passed at 14:00 would show nothing until
+ * tomorrow - the same class of bug as a hire not reaching the floor, which is
+ * why this sits next to `addStaffToShift`.
+ *
+ * Returns a NEW shift. Idempotent: a call for a stage already open is a no-op,
+ * which matters because `syncCareer` runs every frame.
+ *
+ * DRAWS NO RANDOM NUMBERS. `pacing.mjs` determinism depends on the RNG cursor
+ * being untouched by anything the player's timing can move; a stray
+ * `nextRandom` here would make every measured number incomparable between runs.
+ */
+export function openContentOnShift(shift, stage) {
+  const bundle = stageConfig(stage);
+  if (!bundle || (shift.arcStage ?? 0) >= stage) return shift;
+
+  const config = { ...shift.config, ...bundle };
+  const next = { ...shift, config, arcStage: stage };
+
+  /**
+   * THE PHONE HAS TO BE RE-ARMED OR IT NEVER RINGS AGAIN TODAY.
+   *
+   * `createShift` sets `nextPhoneAt` to Infinity whenever `phoneCalls` is 0,
+   * which every stage below 4 is. Copying the build-time arithmetic without
+   * this is the single most likely way to ship "an unlock that unlocks nothing"
+   * for the second time in a week.
+   *
+   * Calls are pro-rated to what is LEFT of the day: a stage-4 unlock at 18:00
+   * must not dump five calls into the last two minutes.
+   */
+  if (bundle.phoneCalls > 0 && !(shift.phoneCallsLeft > 0)) {
+    const remaining = Math.max(0, 1 - next.time / Math.max(1, config.durationSec));
+    next.phoneCallsLeft = Math.max(1, Math.round(bundle.phoneCalls * remaining));
+    next.nextPhoneAt = next.time + 8 * (config.dayStretch ?? 1);
+  }
+  return next;
+}
+
 export function addStaffToShift(shift, { role, tier = 1 }) {
   return { ...shift, staff: [...shift.staff, makeStaff(role, tier)] };
 }
@@ -1728,9 +1866,17 @@ export function createShift(level, seed, options = {}) {
   const stretch = durationSec / base.durationSec;
   const config = {
     ...base,
-    // THE TEACHING ARC OVERRIDES THE RANK. See ONBOARDING_DAYS - without this,
-    // days 3, 4 and 5 could not teach the departments they exist to teach.
-    ...onboardingDay(options.today ?? null),
+    /**
+     * THE TEACHING ARC OVERRIDES THE RANK, AND IT IS KEYED TO WHAT THE PLAYER
+     * HAS DONE. See CONTENT_STAGES. `career` comes from the property; the day
+     * number only sets the floor under it now (backstopStage), so a player who
+     * has earned stage 3 gets stage 3 on day 2, and a player who has earned
+     * nothing is never left behind the old calendar.
+     *
+     * Passing no career at all - every standalone shift and every existing
+     * test - falls back to the day floor, which is the behaviour that shipped.
+     */
+    ...(stageConfig(effectiveStage(options.career, options.today ?? null)) ?? {}),
     durationSec,
     dayStretch: stretch,
     walkInChance: base.walkInChance / stretch,

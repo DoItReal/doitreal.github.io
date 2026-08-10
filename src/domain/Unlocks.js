@@ -50,6 +50,83 @@ export const DEPARTMENT_GOALS = {
   reservations: { counter: "calls", need: 12, profit: 5000, doing: "take bookings on the phone" },
 };
 
+/* --------------------------------------------------- what OPENS the work -- */
+
+/**
+ * WHAT YOU HAVE TO HAVE DONE FOR THE NEXT JOB TO APPEAR AT ALL.
+ *
+ * Operator, through day 9 of the deployed build: "the game doesnt care much
+ * about the goals to unlock more content. The content unlocks with the days
+ * passed somehow... this is real bug the content must be unlocked immidiately
+ * after completing the goal not after the time passed. And the goal must be
+ * completed without hiring the staff, hiring the staff is optional."
+ *
+ * He was describing `engine.ONBOARDING_DAYS`, keyed by DAY NUMBER 1..5, which
+ * overrode the day's task list on a calendar rather than on anything he did.
+ * Hence bellboy work appearing on day 3 and maintenance on day 8-9 however much
+ * of the job he had actually finished.
+ *
+ * TWO RUNGS PER DEPARTMENT, WHICH IS THE WHOLE DESIGN. `game-designer` measured
+ * the obvious version - wiring DEPARTMENT_GOALS straight into the task list -
+ * and it stretches the eleven-minute teaching arc to about day 17: at the
+ * measured supply, twelve escorts lands ~day 6, fifteen cleans ~day 10, eight
+ * repairs ~day 14. So the goal is doing two jobs and they are split here:
+ *
+ *   LEARN - this table. Small, WORK ONLY, no money. It opens the CONTENT.
+ *   HIRE  - DEPARTMENT_GOALS above, unchanged, work + profit. It opens the HIRE.
+ *
+ * Content on work alone is the operator's own framing: the goals teach the
+ * mechanics and hiring is the optional automation. The money half asks "can the
+ * payroll carry a wage", which has nothing to do with whether the player is
+ * ready to be shown a mop - and gating on it would withhold teaching from
+ * exactly the player doing worst.
+ *
+ * HIRING CANNOT ADVANCE A GATE, and that is load-bearing rather than incidental:
+ * these read `career`, which only the PLAYER's own hands write. Staff finishing
+ * a job does not move it. See the test.
+ *
+ * UNVERIFIED - 4 / 4 / 4 / 3. Method: the smallest count that reads as "you have
+ * done this job a few times", backsolved against the measured arrival and
+ * departure supply so each gate lands on or before the day the current arc
+ * teaches that department - 4 check-ins by mid day 1 (6 arrivals), 4 escorts by
+ * mid day 3, 4 cleans by day 4 (5 departures), 3 repairs by day 5. That
+ * reproduces the measured 1-2-3-4-5 shape from what the player did rather than
+ * from the calendar, which is the entire point. Plausible range 3-6.
+ */
+export const CONTENT_GATES = [
+  { stage: 1, counter: "checkIns", need: 4, opens: "the bellboy's work" },
+  { stage: 2, counter: "escorts", need: 4, opens: "housekeeping's work" },
+  { stage: 3, counter: "cleans", need: 4, opens: "maintenance's work" },
+  { stage: 4, counter: "repairs", need: 3, opens: "the reservations desk" },
+  { stage: 5, counter: "calls", need: 12, opens: "the whole floor" },
+];
+
+/**
+ * How far along the teaching arc this career has actually got, 0 to 5.
+ *
+ * DERIVED, NEVER STORED. A stored stage can drift from the career it was
+ * computed from, which is the class of bug that produced "full bar, $16 more
+ * profit, nothing moving" - two numbers for one truth. It also means no save
+ * migration: an existing player's stage falls out of counters they already have.
+ *
+ * SEQUENTIAL AND MONOTONE. Stage 3 requires 1 and 2 behind it, so a player who
+ * somehow banks cleans before escorts does not skip the escort lesson.
+ */
+export function contentStage(career = {}) {
+  let stage = 0;
+  for (const gate of CONTENT_GATES) {
+    if ((career[gate.counter] ?? 0) < gate.need) break;
+    stage = gate.stage;
+  }
+  return stage;
+}
+
+/** The gate the player is working on now, or null once the arc is complete. */
+export function nextContentGate(career = {}) {
+  const stage = contentStage(career);
+  return CONTENT_GATES.find((gate) => gate.stage === stage + 1) ?? null;
+}
+
 /** A fresh career: every counter at zero. */
 export function emptyCareer() {
   return {

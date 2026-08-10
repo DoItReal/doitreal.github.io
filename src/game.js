@@ -22,7 +22,7 @@ import {
   levelConfig, outletBrigade, outletCapacity, outstandingBookings, roleWage,
   roomsAvailable, score, startTask, suggestTask, takeOver,
   taskBoard, taskSeconds, taskUrgency, tick,
-  hourSeconds, WAIT_LADDER, addStaffToShift,
+  hourSeconds, WAIT_LADDER, addStaffToShift, openContentOnShift, effectiveStage,
 } from "./engine.js";
 import {
   BUILD_CATALOG, BUILD_KIND, OFFLINE_CAP_SECONDS, REFURB, ROOM as BUILD_ROOM,
@@ -445,6 +445,9 @@ function shiftOptions(level) {
      * `automationCoverage` in property.js, which deliberately does not count the
      * owner.
      */
+    // THE ARC IS KEYED TO THE PLAYER'S WORK, not to the calendar. See
+    // CONTENT_STAGES - the day number only floors it now.
+    career: state.property.career,
     roster: availableRoster(state.property),
     rating: rating(),
     // Last night's preparation, spent on this morning's check-ins. See NIGHT_PREP.
@@ -573,6 +576,22 @@ function syncCareer() {
     state.banked.career[key] = (state.banked.career[key] ?? 0) + delta;
   }
   // A promotion can now land mid-shift, which is the point of paying live.
+  /**
+   * THE WORK JUST DONE MAY HAVE OPENED THE NEXT DEPARTMENT'S WORK. Show it NOW.
+   *
+   * Operator: "the content must be unlocked immidiately after completing the
+   * goal not after the time passed." This runs every frame and already banks the
+   * counters the gates read, so it is the honest place to notice - the board
+   * changes on the tap that earned it.
+   */
+  if (state.shift && !state.shift.over) {
+    const stage = effectiveStage(state.property.career, state.shift.today ?? null);
+    if (stage > (state.shift.arcStage ?? 0)) {
+      state.shift = openContentOnShift(state.shift, stage);
+      toast("New work on the floor.");
+    }
+  }
+
   const rank = rankOf(state.property);
   if (rank.canPromote(state.property) && rank.promote(state.property)) {
     state.property = withRank(state.property, rank);
