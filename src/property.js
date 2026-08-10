@@ -53,6 +53,7 @@ import {
 import {
   DEPARTMENT_GOALS, emptyCareer, isUnlocked, nextDepartment, unlockProgress, unlockShare,
   CONTENT_GATES, contentStage, nextContentGate, UNLOCK_NOTES, HIRE_NOTES,
+  HIRE_STAGE, hireUnlocked, hireGap,
 } from "./domain/Unlocks.js";
 
 /* ------------------------------------------------------------- building -- */
@@ -356,7 +357,21 @@ export function hireBlocker(property, role) {
    * PROMOTION, not a purchase - which is also why a level-1 player cannot buy
    * their way past the levels that teach the game.
    */
-  const rankCap = staffCap(rankOf(property).level, role);
+  /**
+   * RANK DECIDES HOW MANY, NEVER WHETHER.
+   *
+   * THE CATCH-22 THIS BREAKS, from the operator: he reached the reservations
+   * desk and still could not hire a receptionist, and a bellboy was refused with
+   * "From Head receptionist. Your rank cannot employ one." But the requirement
+   * for Head receptionist is a RECEPTIONIST ON THE PAYROLL - so the rank needed
+   * the hire and the hire needed the rank, and neither could ever happen.
+   *
+   * A rank is the headcount economy - how many of a trade you may run at once -
+   * and the operator has been clear that it is about STAFF, not about what the
+   * owner is allowed to do. So the FIRST of any department you have learned is
+   * always yours to hire; rank raises the ceiling above one.
+   */
+  const rankCap = Math.max(isFnbRole(role) ? 0 : 1, staffCap(rankOf(property).level, role));
   if (rankCap === 0) {
     // NAME THE RANK THAT ACTUALLY OPENS IT. This used to say "a <next rank> may
     // take one on", which is only true for trades unlocking on the very next
@@ -388,9 +403,17 @@ export function hireBlocker(property, role) {
    *
    * F&B is exempt, as before: an owner hires a chef, they never train as one.
    */
-  if (!isFnbRole(role)) {
-    const progress = unlockProgress(property.career, role);
-    if (!progress.met) return progress.gaps.map((g) => g.text).join(", ");
+  /**
+   * YOU OPEN A HIRE BY LEARNING THE JOB - the SAME ladder that opens the work.
+   *
+   * This used to read `DEPARTMENT_GOALS` (ten check-ins AND $300 for a
+   * receptionist) while the content ladder opened the next job at four
+   * check-ins. Two ladders at different speeds, so the operator was running the
+   * reservations desk and still being told "6 more to check guests in" before he
+   * could hire a receptionist. See HIRE_STAGE.
+   */
+  if (!isFnbRole(role) && !hireUnlocked(property.career, role)) {
+    return hireGap(property.career, role);
   }
   const fee = recruitmentFee(role);
   if (spendable(property) < fee) return `Costs $${fee}; you hold $${spendable(property)}.`;
@@ -444,6 +467,7 @@ export function openPositions(property) {
 /** Re-exported so callers have one import for "what opens a department". */
 export { DEPARTMENT_GOALS, unlockProgress, isUnlocked, nextDepartment, unlockShare };
 export { CONTENT_GATES, contentStage, nextContentGate, UNLOCK_NOTES, HIRE_NOTES };
+export { HIRE_STAGE, hireUnlocked, hireGap };
 
 /**
  * Bank experience and the jobs behind it, as they happen. Returns a NEW property.

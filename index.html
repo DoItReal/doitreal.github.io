@@ -107,10 +107,18 @@
   main{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
   .jobshead{display:flex;align-items:baseline;gap:6px;font-size:10.5px;color:var(--muted);
     text-transform:uppercase;letter-spacing:.07em;flex:none}
-  /* The jobs list must keep its height when the crew strip appears after the
-     first hire - it was collapsing to a couple of rows. A real floor is mostly
-     the job list. (Cosmetic: the UI is being replaced by a Godot build.) */
-  .jobs{flex:1;min-height:38vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;
+  /* THE LIST SCROLLS. IT DOES NOT PUSH THE CONTROLS OFF THE SCREEN.
+     Operator: "The layout bug now hides the menu buttons for staff/ build etc..
+     when there are more than 3 tasks."
+     It had min-height:38vh, added so the list would not collapse when the crew
+     strip appeared. But a min-height is a FLOOR a flex item cannot shrink past,
+     so once there were more rows than fitted, the column grew instead of
+     scrolling and carried the bottom row of buttons past the fold - on a phone,
+     where those buttons ARE the navigation. The floor is gone and the basis is
+     zero, so the list takes the space that is left and scrolls inside it; the
+     crew strip is already capped at 18vh, which is what the floor was really
+     defending against. (Cosmetic: the UI is being replaced by a Godot build.) */
+  .jobs{flex:1 1 0;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:6px;
     background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px;
     box-shadow:var(--shadow);scrollbar-width:thin}
   .job{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:11px;

@@ -157,7 +157,66 @@ export const UNLOCK_NOTES = {
   },
 };
 
-/** What HIRING a department opens, once its money-and-work goal is met. */
+/**
+ * WHICH CONTENT STAGE OPENS HIRING FOR EACH DEPARTMENT.
+ *
+ * Operator: "Unlocking the next job does not unlock the staff hiring for the
+ * previous one now. I get to reservation manager and still cant hire
+ * receptionist."
+ *
+ * He is right, and the split that caused it was mine. Content opened on a small
+ * work-only gate (4 check-ins) while HIRING still needed `DEPARTMENT_GOALS` (10
+ * check-ins AND $300), so a player could be doing the reservations desk and
+ * still be told "6 more to check guests in" for a receptionist. Two ladders at
+ * different speeds, and the player is standing on both.
+ *
+ * ONE LADDER NOW. Reaching the stage that opens the NEXT job's work is exactly
+ * the evidence that you are done learning the PREVIOUS one - so it opens that
+ * department's hire at the same moment. Stage 1 opens the bellboy's work and
+ * lets you hire a receptionist; stage 2 opens housekeeping's work and lets you
+ * hire a bellboy; and so on.
+ *
+ * Affordability is still real - the recruitment fee and the daily wage are
+ * checked when you actually hire - but a LIFETIME PROFIT figure is no longer in
+ * the way of an unlock. That number was asking "has this hotel ever been worth
+ * something", which is not the same question as "have you learned this job".
+ */
+export const HIRE_STAGE = {
+  reception: 1,
+  bellboy: 2,
+  housekeeping: 3,
+  maintenance: 4,
+  reservations: 5,
+};
+
+/** Has the player done enough of this job to stop doing it themselves? */
+export function hireUnlocked(career = {}, role) {
+  const need = HIRE_STAGE[role];
+  if (!need) return true;
+  return contentStage(career) >= need;
+}
+
+/** What is still missing before this department can be hired, in the player's words. */
+export function hireGap(career = {}, role) {
+  if (hireUnlocked(career, role)) return null;
+  const need = HIRE_STAGE[role];
+  // The gate the player is standing on, on the way to that stage.
+  const gate = CONTENT_GATES.find((g) => g.stage === Math.min(need, contentStage(career) + 1));
+  if (!gate) return "Not yet.";
+  const have = Math.max(0, career[gate.counter] ?? 0);
+  return `${Math.max(0, gate.need - have)} more to ${GATE_DOING[gate.counter] ?? gate.counter}`;
+}
+
+/** What each gate counter is, said the way the player would say it. */
+export const GATE_DOING = {
+  checkIns: "check guests in",
+  escorts: "show guests up to their room",
+  cleans: "turn rooms",
+  repairs: "fix what breaks",
+  calls: "take bookings on the phone",
+};
+
+/** What HIRING a department opens, once its work is learned. */
 export const HIRE_NOTES = {
   reception: "You can hire a receptionist now - they hold the desk while you are away.",
   bellboy: "You can hire a bellboy now.",
