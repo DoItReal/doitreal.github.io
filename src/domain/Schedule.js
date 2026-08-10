@@ -152,6 +152,49 @@ export const WALK_IN_HOURS = { from: 12, to: 23 };
  */
 export const NIGHT_PREP_HOURS = { from: 0, to: 6.5 };
 
+/**
+ * THE OPENING MORNING - day 1, and only day 1.
+ *
+ * Operator directive, 2026-08-10: "you get a hotel which opens just right now.
+ * It must have no occupied rooms, no staff, maybe 50$ in the bank."
+ *
+ * A hotel that opens today has nobody upstairs, so day 1 has no check-outs to
+ * open on and no guest before 09:00. Measured, that put the first thing the
+ * player could touch at 11.0s of a 150s day - the worst opening a prototype
+ * whose acceptance test is "catchy within ten minutes" could have.
+ *
+ * The answer is not to invent guests. It is the same answer the operator
+ * already gave for the small hours: give the empty time the job it really has.
+ * On the morning you open, the desk is being SET UP - keys cut, registration
+ * cards laid out, the rack made ready - which is `TASK.PREP`, one window
+ * earlier. It pays out today rather than tomorrow, because the guests it is for
+ * arrive this afternoon.
+ *
+ * THE BUG THIS ALSO FIXES: `ONBOARDING_DAYS[1]` has listed `TASK.PREP` since the
+ * teaching arc was written, and day 1 could never spawn one - the spawn guard
+ * asks `isNightShift`, and day 1 begins at 08:00. Day 1 has been advertising a
+ * task type it cannot produce. Found by `game-designer`, 2026-08-10.
+ *
+ * UNVERIFIED: the 08:00-12:00 span. Method - it starts when the doors open and
+ * ends at the check-out deadline, after which the day is about guests rather
+ * than preparation. The operator should correct it.
+ */
+export const OPENING_PREP_HOURS = { from: 8, to: 12 };
+
+/**
+ * WHEN THE VERY FIRST GUEST OF ALL TURNS UP.
+ *
+ * 08:20 on day 1, before `ARRIVAL_HOURS.earliest`, and deliberately so: this is
+ * the one arrival that is not a distribution. Somebody booked the week you
+ * announced you were opening and they are on the step when you unlock. The
+ * brief admits them - "if the room is free and clean, they can be checked in" -
+ * and every room in a hotel that has never traded is free and clean.
+ *
+ * It applies to day 1 only. From day 2 arrivals follow ARRIVAL_HOURS like
+ * everyone else.
+ */
+export const OPENING_DAY_FIRST_ARRIVAL_HOUR = 8.33;
+
 /* ------------------------------------------------------- what schedules -- */
 
 /**
@@ -169,6 +212,10 @@ export function arrivalTime(index, total, day, durationSec, random) {
   const jitter = () => (random() - 0.5) * 6;
   const at = (hour) => timeOfHour(day, durationSec, hour);
   const early = Math.max(1, Math.round(n * EARLY_ARRIVAL_SHARE));
+
+  // The first guest the hotel ever has is on the step, not in a distribution.
+  // See OPENING_DAY_FIRST_ARRIVAL_HOUR. No jitter: this one is a scripted beat.
+  if (day === 1 && index === 0) return at(OPENING_DAY_FIRST_ARRIVAL_HOUR);
 
   if (index < early) {
     const from = at(ARRIVAL_HOURS.earliest);
@@ -210,4 +257,26 @@ export function acceptsWalkIns(day, durationSec, elapsed) {
 export function isNightShift(day, durationSec, elapsed) {
   const hour = hourAt(day, durationSec, elapsed);
   return hour >= NIGHT_PREP_HOURS.from && hour < NIGHT_PREP_HOURS.to;
+}
+
+/**
+ * Is this the opening morning - the one window where preparation is for TODAY?
+ * See OPENING_PREP_HOURS. Day 1 only; every other day preps at night, for the
+ * morning after.
+ */
+export function isOpeningPrep(day, durationSec, elapsed) {
+  if (day !== 1) return false;
+  const hour = hourAt(day, durationSec, elapsed);
+  return hour >= OPENING_PREP_HOURS.from && hour < OPENING_PREP_HOURS.to;
+}
+
+/** Is the desk doing preparation work of either kind right now? */
+export function isPrepTime(day, durationSec, elapsed) {
+  return isNightShift(day, durationSec, elapsed)
+    || isOpeningPrep(day, durationSec, elapsed);
+}
+
+/** The window preparation runs in on this day, in hours. */
+export function prepWindow(day) {
+  return day === 1 ? OPENING_PREP_HOURS : NIGHT_PREP_HOURS;
 }

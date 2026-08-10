@@ -71,6 +71,31 @@ export const ROOM = "room";
 export const STARTING_ROOMS = 8;
 
 /**
+ * WHAT IS IN THE TILL ON THE MORNING YOU OPEN. The operator's figure:
+ * "maybe 50$ in the bank. And thats all."
+ *
+ * It is not a starting budget, it is a float, and that is the point of it -
+ * $50 is roughly one trainee's day. It says, without a line of text, that the
+ * hotel cannot pay a wage until it has taken some money, which is why the first
+ * check-in matters and why the first hire is a goal rather than a purchase.
+ * It was $0 before, so this is more generous than what shipped, not less.
+ */
+export const STARTING_BANK = 50;
+
+/**
+ * HOW FULL THE HOTEL IS ON THE MORNING IT OPENS. Zero: it opens today.
+ *
+ * Was 0.55, which gave day 1 four check-outs to teach on. The operator directed
+ * a cold open on 2026-08-10 with the cost measured and in front of them - day 1
+ * loses every check-out, and the check-out lesson moves to day 2. What replaces
+ * it is the opening morning: see Schedule.OPENING_PREP_HOURS.
+ *
+ * Kept as a constant rather than a deleted branch because reversing it is this
+ * one number - see maintainBook and docs/DAY1-COLD-OPEN.md.
+ */
+export const OPENING_OCCUPANCY = 0;
+
+/**
  * Rooms get dearer as the property grows - you run out of easy space long before
  * you run out of ambition. Compounding at 10% per room turns the 30-room 5-star
  * into a genuine long haul (about $32k of rooms alone) without needing a
@@ -830,7 +855,8 @@ export function createProperty(now, options = {}) {
     /** Set by the first check-in. Until then there is no hotel to run. */
     openedAt: options.openedAt ?? null,
     lastSeenAt: now,
-    bank: options.bank ?? 0,
+    /** The opening float. See STARTING_BANK - $50, and it is meant to be tight. */
+    bank: options.bank ?? STARTING_BANK,
     /**
      * THE TILL. Money guests have handed over in notes, today.
      *
@@ -1365,10 +1391,23 @@ export function maintainBook(property, options = {}) {
   const today = clockOf(property).day;
   const house = sellableRoomList(property);
 
-  // FIRST CALL EVER: seed the house so the hotel does not open empty.
-  if (calendar.live.length === 0 && (property.ledger?.days?.length ?? 0) === 0) {
+  /**
+   * FIRST CALL EVER. The hotel used to open 55% full so day 1 had check-outs to
+   * teach on. It now opens EMPTY - the operator's directive of 2026-08-10, "you
+   * get a hotel which opens just right now ... no occupied rooms, no staff".
+   *
+   * `openingOccupancy` is the one number that reverses it, and it is a number
+   * rather than a deleted call on purpose: `reality-check` argued for seeding
+   * 2-3 rooms as a handover from the previous owner and measured better on the
+   * first tap. The operator chose the cold open with that measurement in front
+   * of them. See docs/DAY1-COLD-OPEN.md.
+   */
+  const openingOccupancy = options.openingOccupancy ?? OPENING_OCCUPANCY;
+  if (openingOccupancy > 0
+    && calendar.live.length === 0 && (property.ledger?.days?.length ?? 0) === 0) {
     seedOpeningGuests(calendar, house, {
       today, rate: options.rate ?? 0, seed: property.openedAt ?? 1,
+      occupancy: openingOccupancy,
     });
   }
   const departed = rollBook(calendar, today);

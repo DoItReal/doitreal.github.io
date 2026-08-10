@@ -100,8 +100,16 @@ if (localStorage.getItem(KEY_DESIGN) !== DESIGN_VERSION) {
 function loadProperty(now) {
   const restored = deserialize(localStorage.getItem(KEY_PROPERTY), now);
   if (restored) return restored;
+  /**
+   * A BRAND NEW GAME MUST NOT PASS `bank: 0`. It did, because the old migration
+   * read `KEY_BANK || 0` - which is 0 for a player who has never played - and an
+   * explicit 0 beats `createProperty`'s STARTING_BANK default. The opening float
+   * is only a default; overriding it with a legacy key that is not there is how
+   * a "starting money" change silently does nothing.
+   */
+  const legacyBank = localStorage.getItem(KEY_BANK);
   return createProperty(now, {
-    bank: Number(localStorage.getItem(KEY_BANK) || 0) || 0,
+    ...(legacyBank === null ? {} : { bank: Number(legacyBank) || 0 }),
     rating: Number(localStorage.getItem(KEY_RATING)) || 3.5,
   });
 }
@@ -169,6 +177,17 @@ const LABEL = {
   [TASK.PREP]: {
     tag: "NGT", name: "Prepare for tomorrow",
     sub: "Cut keys, lay out the paperwork - a faster morning", tone: "ngt",
+    /**
+     * DAY 1 IS THE SAME JOB FOR A DIFFERENT DAY. On the morning you open, the
+     * keys you cut are for the guests arriving this afternoon, not tomorrow's -
+     * see Schedule.OPENING_PREP_HOURS, and `finishTask`, which credits it to
+     * today's pool. Calling it "prepare for tomorrow" on opening morning would
+     * describe the wrong day and hide the only return the player can see.
+     */
+    day1: {
+      tag: "OPN", name: "Get a room ready",
+      sub: "Cut the key, make out the card - a faster check-in today",
+    },
   },
   [TASK.ESCORT]: { tag: "UP", name: "Show up to room", sub: "Optional - costs time, earns a tip", tone: "up" },
   [TASK.CLEAN]: { tag: "HK", name: "Turn the room", sub: "Cannot be sold dirty", tone: "hk" },
@@ -549,9 +568,18 @@ function jobSignature(shift) {
     .map(({ task, group, doing }) => `${task.id}:${group}${doing ? "*" : ""}`).join(",");
 }
 
+/**
+ * The label this task wears TODAY. Only prep differs, and only on day 1 - see
+ * the `day1` note on LABEL[TASK.PREP].
+ */
+function labelFor(task) {
+  const meta = LABEL[task.type];
+  return meta.day1 && (state.shift?.today ?? 1) === 1 ? { ...meta, ...meta.day1 } : meta;
+}
+
 /** One job row, built once and then owned by `jobNodes` until the task goes. */
 function makeJobNode(task) {
-  const meta = LABEL[task.type];
+  const meta = labelFor(task);
   const node = document.createElement("div");
   node.className = "job appear";
   node.dataset.task = String(task.id);
@@ -1044,7 +1072,7 @@ function paint() {
       sub.textContent = lateHours < WAIT_LADDER.graceHours
         ? "Waiting for their room"
         : `${Math.floor(lateHours)}h late - they are looking elsewhere`;
-    } else sub.textContent = LABEL[task.type].sub;
+    } else sub.textContent = labelFor(task).sub;
 
     const fuse = node.querySelector(".fuse");
     if (doing) {
@@ -3271,10 +3299,75 @@ el("export").addEventListener("click", (event) => {
   link.click();
 });
 
+/**
+ * THE OPENING, IN FOUR BEATS.
+ *
+ * What this replaces: one paragraph of instructions behind a button labelled
+ * "Open up". It explained escorting - a task that moved to day 2 with the
+ * bellboy and does not exist on day 1 - and it explained the controls before the
+ * player had touched anything. Every piece of onboarding research says the same
+ * thing about that: let them act first. "Every video watched is a user lost."
+ *
+ * THE RULES THESE BEATS FOLLOW, and they are the genre's rather than ours:
+ *   - state the fantasy, not the controls;
+ *   - show the balance sheet, because $50 IS the hook - it says the hotel cannot
+ *     pay a wage until it takes some money;
+ *   - put the first guest on the step before the last beat, so the thing waiting
+ *     behind the card is a person and not a menu;
+ *   - close on the next goal, which the game already tracks (domain/Unlocks.js).
+ *
+ * Data, not markup, so the Godot port takes the copy and leaves index.html.
+ */
+const INTRO_BEATS = [
+  {
+    step: "08:00", title: "The keys are yours.",
+    body: "Eight rooms. Nobody upstairs, nobody on the payroll, and the hotel "
+      + "opens today.",
+    note: "You are the front desk.",
+  },
+  {
+    step: "The till", title: "$50.",
+    body: "That is about one day's wage for one person - and you have not hired "
+      + "anyone. The hotel pays for itself out of tonight's rooms or it does not "
+      + "pay at all.",
+    note: "Nothing here is bought with money you do not have.",
+  },
+  {
+    step: "The morning", title: "Get the desk ready.",
+    body: "Cut a key and make out a card for every room before the doors open. "
+      + "Every one you do makes a check-in faster this afternoon.",
+    note: "Tap a job to do it yourself - one at a time.",
+  },
+  {
+    step: "08:20", title: "Your first guest is at the door.",
+    body: "They booked the week you announced you were opening. Check them in "
+      + "and the room is paid for.",
+    note: "Then: 10 check-ins and $300 profit hires your first receptionist.",
+  },
+];
+
+let introBeat = 0;
+
+function paintIntro() {
+  const beat = INTRO_BEATS[introBeat];
+  el("tut-step").textContent = beat.step;
+  el("tut-title").textContent = beat.title;
+  el("tut-body").textContent = beat.body;
+  el("tut-note").textContent = beat.note;
+  el("tut-go").textContent = introBeat === INTRO_BEATS.length - 1 ? "Open up" : "Next";
+}
+
 el("tut-go").addEventListener("click", () => {
+  sound.ensure();
+  if (introBeat < INTRO_BEATS.length - 1) {
+    introBeat += 1;
+    paintIntro();
+    sound.start();
+    analytics.track("tutorial_beat", { beat: introBeat });
+    return;
+  }
   el("tut-veil").classList.remove("show");
   localStorage.setItem(KEY_TUT, "1");
-  sound.ensure();
   analytics.track("tutorial_complete");
   beginDay();
 });
@@ -3438,12 +3531,8 @@ if (localStorage.getItem(KEY_TUT)) {
     el("pause").textContent = "Resume";
   }
 } else {
-  const config = levelConfig(state.level);
-  el("tut-title").textContent = config.subtitle;
-  el("tut-body").textContent = "Guests appear in the list. Tap a job to do it yourself - one at "
-    + "a time. Checking someone in pays for the room. Showing them up is optional: it costs "
-    + "seconds you may not have, and earns a tip and a happier guest. You need the profit AND "
-    + "the satisfaction to finish a shift.";
+  introBeat = 0;
+  paintIntro();
   el("tut-veil").classList.add("show");
   analytics.track("tutorial_start");
 }

@@ -549,11 +549,25 @@
   </div>
 </div>
 
+<!--
+  THE OPENING. Four beats, not a paragraph of instructions behind a Go button.
+
+  The paragraph this replaces explained escorting - which moved to day 2 when the
+  bellboy did - and it explained the controls before the player had touched
+  anything, which every piece of onboarding research says is the way to lose
+  them. The beats state the fantasy, show the till, put the first guest on the
+  step, and name the next goal. Nothing here has to be read to play.
+
+  Copy lives in game.js (INTRO_BEATS) so it is data, not markup - the Godot port
+  takes the data and leaves this file behind.
+-->
 <div class="veil" id="tut-veil">
   <div class="card">
+    <p class="roadmap" id="tut-step"></p>
     <h2 id="tut-title">Your hotel. Your front desk.</h2>
     <p id="tut-body"></p>
-    <button id="tut-go">Open up</button>
+    <p class="roadmap" id="tut-note"></p>
+    <button id="tut-go">Next</button>
   </div>
 </div>
 

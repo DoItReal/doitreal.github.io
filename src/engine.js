@@ -27,10 +27,11 @@
 // closes no cycle. (Room.js is the one that cannot be imported here - see
 // ROOM_TYPE_RATE, which is duplicated for exactly that reason.)
 import {
-  GUARANTEE_HOUR, NIGHT_PREP_HOURS,
+  GUARANTEE_HOUR, NIGHT_PREP_HOURS, OPENING_PREP_HOURS,
   acceptsWalkIns, arrivalTime, checkoutTime, hourAt as scheduleHourAt,
   hourSeconds as scheduleHour,
-  isNightShift, patienceStartsAt as schedulePatience, timeOfHour as scheduleTimeOfHour,
+  isNightShift, isOpeningPrep, isPrepTime, prepWindow,
+  patienceStartsAt as schedulePatience, timeOfHour as scheduleTimeOfHour,
 } from "./domain/Schedule.js";
 
 export const TASK = {
@@ -1469,12 +1470,39 @@ export const NIGHT_PREP = {
   savesPerCheckIn: 1.2,
 };
 
+/**
+ * THE MORNING YOU OPEN IS NOT A NIGHT AUDIT. See Schedule.OPENING_PREP_HOURS.
+ *
+ * A night shift tops up a desk that is already running. Opening day sets one up
+ * from nothing: every room needs its key cut and its card made out before a
+ * single guest can be received. So it is ONE JOB PER ROOM rather than three per
+ * ten, and it caps itself - you cannot prepare a ninth room in an eight-room
+ * hotel.
+ *
+ * It is also what pays for the cold open. Measured at the night-audit rate, the
+ * opening morning offered 2 jobs across four in-game hours and day 1 ran 83%
+ * dead; at one per room it is roughly 27s of work inside a 37s morning, and
+ * every one of them comes back as a faster check-in the same afternoon.
+ *
+ * UNVERIFIED: one per room. Method - it is the largest number that is still
+ * obviously finite to the player (they can see the rooms), and it lands one prep
+ * per expected check-in on the opening day. Plausible range 0.5-1.5 per room.
+ */
+export const OPENING_PREP = { perRoom: 1 };
+
 /** The hours it runs in live in Schedule.js, with every other hour of the day. */
-export { NIGHT_PREP_HOURS };
+export { NIGHT_PREP_HOURS, OPENING_PREP_HOURS };
 
 /** How many prep jobs tonight is worth for this house. */
 export function nightPrepJobs(shift) {
   return Math.max(1, Math.round((shift.roomCount / 10) * NIGHT_PREP.perTenRooms));
+}
+
+/** How many prep jobs this day's preparation window is worth. */
+export function prepJobs(shift) {
+  return shiftDay(shift) === 1
+    ? Math.max(1, Math.round(shift.roomCount * OPENING_PREP.perRoom))
+    : nightPrepJobs(shift);
 }
 
 /**
@@ -2302,8 +2330,25 @@ function completeTask(shift, task, worker) {
 
   if (task.type === TASK.REQUEST) shift.requestsDone += 1;
 
-  // The night's work is stored, not spent. It comes back as faster check-ins.
-  if (task.type === TASK.PREP) shift.prepDone += 1;
+  /**
+   * PREPARATION, AND WHICH DAY IT IS FOR.
+   *
+   * The NIGHT's work is stored, not spent - it comes back as faster check-ins
+   * tomorrow morning, which is the whole return on the night shift.
+   *
+   * The OPENING morning's work is for TODAY. You are cutting keys at half past
+   * eight for people arriving at two, and a player who cannot see the return
+   * inside the day they did the work has been given a chore, not a job. So it
+   * lands straight in `preppedFor`, where `checkInSeconds` can spend it, and it
+   * is deliberately NOT also banked for tomorrow - one prep, one check-in.
+   */
+  if (task.type === TASK.PREP) {
+    if (isOpeningPrep(shiftDay(shift), shift.config.durationSec, shift.time)) {
+      shift.preppedFor = (shift.preppedFor ?? 0) + 1;
+    } else {
+      shift.prepDone += 1;
+    }
+  }
 }
 
 /**
@@ -2572,20 +2617,27 @@ export function tick(shift, dt) {
   }
 
   /**
-   * --- THE NIGHT SHIFT. See NIGHT_PREP. Only while it IS night, only on a day
-   * that has a night to work (the onboarding days that teach reception), and
-   * only ever a handful - the point is that the small hours are quiet, not that
-   * they are secretly the busiest part of the day.
+   * --- PREPARATION. See NIGHT_PREP. Only inside a preparation window, and only
+   * ever a handful - the point is that these hours are quiet, not that they are
+   * secretly the busiest part of the day.
+   *
+   * TWO WINDOWS, and Schedule.js owns both. Every ordinary day preps at night
+   * for the morning after. DAY 1 preps in the MORNING, because the hotel opens
+   * that day: there was no night to work and the guests it is for arrive this
+   * afternoon. See OPENING_PREP_HOURS.
+   *
+   * Before this, `ONBOARDING_DAYS[1]` listed `TASK.PREP` and day 1 could never
+   * spawn one - the guard asked `isNightShift` and day 1 begins at 08:00. Day 1
+   * advertised a task type it could not produce.
    */
   if (next.config.tasks.includes(TASK.PREP)) {
     const day = shiftDay(next);
     const spawned = next.tasks.filter((t) => t.type === TASK.PREP).length;
-    const wanted = nightPrepJobs(next);
-    // Day 1 opens at 08:00, so it simply has no night to work - which falls out
-    // of the timetable rather than needing a special case here.
-    if (isNightShift(day, next.config.durationSec, next.time) && spawned < wanted) {
-      const slot = (NIGHT_PREP_HOURS.to - NIGHT_PREP_HOURS.from) / wanted;
-      const dueBy = NIGHT_PREP_HOURS.from + slot * spawned;
+    const wanted = prepJobs(next);
+    if (isPrepTime(day, next.config.durationSec, next.time) && spawned < wanted) {
+      const window = prepWindow(day);
+      const slot = (window.to - window.from) / wanted;
+      const dueBy = window.from + slot * spawned;
       if (hourAtShift(next) >= dueBy) {
         addTask(next, TASK.PREP, {
           // No expiry. Nobody is standing there; the work is simply available.

@@ -99,6 +99,44 @@ export const PARTY_MIX = [
   { guests: 3, weight: 0.20 }, { guests: 4, weight: 0.08 },
 ];
 
+/**
+ * THE PARTY SIZES THIS BUILDING CAN ACTUALLY TAKE, renormalised.
+ *
+ * THE BUG THIS FIXES, measured 2026-08-10. The opening eight-room house tops out
+ * at THREE heads - capacity 2 plus one extra bed, and two of the eight are
+ * singles. `PARTY_MIX` draws a party of four with weight 0.08 regardless. That
+ * party can never be housed, `availableRooms` returns `[]`, and `fillBook` used
+ * to `break` - so the FIRST family of four in the random stream deleted the rest
+ * of that day's arrivals.
+ *
+ * Measured on the shipped house (`createHouse(8, { seed: 20260809 })`, every
+ * room a single, twin or double): day 1 produced exactly 3 arrivals on every
+ * seed, against a generator target of 6, and no amount of demand moved it.
+ * Emptying the hotel entirely still gave 3, which is what proves it was never
+ * about capacity. `continue` alone gives 5.
+ *
+ * `continue` is still not the whole fix, and `reality-check` was right about
+ * why: an unhousable party that is merely SKIPPED is demand that silently
+ * evaporates. Drawing only from what the building can hold means
+ * `availableRooms() === []` recovers its honest meaning - genuinely full - and
+ * the file's top rule ("only ever creates bookings the property could actually
+ * house") holds by construction rather than by a guard.
+ *
+ * What it does NOT do is pretend the segment does not exist: a house with no
+ * family room simply is not sold to families, which is a real constraint a
+ * hotelier would recognise and a legible reason to build one.
+ */
+export function housableParties(house) {
+  const ceiling = house.reduce((most, room) => {
+    const spec = ROOM_TYPE_SPEC[room.type];
+    return Math.max(most, spec.capacity + spec.extraBeds);
+  }, 0);
+  const usable = PARTY_MIX.filter((row) => row.guests <= ceiling);
+  // A building that cannot take even one head is not a hotel; fall back rather
+  // than hand `pick` an empty table.
+  return usable.length ? usable : [PARTY_MIX[0]];
+}
+
 function pick(table, roll, key) {
   const total = table.reduce((sum, row) => sum + row.weight, 0);
   let r = roll * total;
@@ -143,6 +181,8 @@ export function fillBook(calendar, house, options = {}) {
   const added = [];
   const sellable = house.filter((room) => !room.outOfInventory);
   if (sellable.length === 0) return added;
+  // Only party sizes this building can take. See housableParties.
+  const parties = housableParties(sellable);
 
   for (let day = today; day < today + horizon; day += 1) {
     // Days closer to today are already largely booked; the far end of the
@@ -153,7 +193,7 @@ export function fillBook(calendar, house, options = {}) {
     const already = calendar.arrivalsOn(day).length;
 
     for (let i = already; i < target; i += 1) {
-      const guests = pick(PARTY_MIX, random(), "guests");
+      const guests = pick(parties, random(), "guests");
       let nights = pick(NIGHTS_MIX, random(), "nights");
       // See ONBOARDING_SHORT_STAY. Trimmed, never replaced - the long stays are
       // still in there, which is what keeps day 5's lesson intact.
@@ -162,8 +202,15 @@ export function fillBook(calendar, house, options = {}) {
 
       // ONLY IF IT CAN ACTUALLY BE HOUSED. See the note at the top: the
       // generator must never create the overbooking, only the opportunity.
+      //
+      // CONTINUE, NOT BREAK. One enquiry that will not fit is not evidence the
+      // book is closed - a hotel that cannot take a four-night family takes the
+      // next call. Breaking here threw away the REST of the day's demand on the
+      // strength of a single awkward request, and measured, that cost day 1 half
+      // its arrivals. The `random()` keeps the id draw the placed branch makes,
+      // so the stream does not depend on which way this went.
       const free = calendar.availableRooms(sellable, day, nights, { guests });
-      if (free.length === 0) break;
+      if (free.length === 0) { random(); continue; }
 
       const booking = new Booking({
         id: `bk-${day}-${i}-${Math.floor(random() * 1e6)}`,
@@ -230,16 +277,24 @@ export function inHouseTonight(calendar, day) {
  * this was wired, and it produced a hotel where no room ever came free.
  */
 /**
- * OPEN THE HOTEL WITH PEOPLE IN IT.
+ * OPEN THE HOTEL WITH PEOPLE IN IT - and as of 2026-08-10, we do not.
  *
- * `fillBook` starts at `today`, so nothing ever had `arrivalDay < 1` and day 1
- * opened at 0% occupancy: eight empty rooms, nobody in the lobby, and not one
- * departure to process. The player's first sight of their own hotel was an
- * empty building, which teaches nothing about running one.
+ * `fillBook` starts at `today`, so nothing ever had `arrivalDay < 1`. This
+ * seeds the book BACKWARDS instead: stays that began before day 1 and run into
+ * it, some of them leaving on the first morning, which used to be where day 1's
+ * check-outs came from.
  *
- * So the book is seeded BACKWARDS at opening: stays that began before day 1 and
- * run into it. Some leave on the first morning - which is the check-out lesson,
- * the housekeeping that follows it, and the room to resell.
+ * IT IS NO LONGER CALLED ON A NEW PROPERTY. The operator directed a cold open -
+ * "you get a hotel which opens just right now, no occupied rooms, no staff" -
+ * and `maintainBook`'s `openingOccupancy` now defaults to 0. The function is
+ * kept, parameterised and tested because reversing that decision is one number:
+ * `reality-check` argued for a handover of 2-3 rooms and measured well
+ * (`docs/DAY1-COLD-OPEN.md`), and the operator chose the pure cold open over it
+ * with the numbers in front of them.
+ *
+ * The cost of the cold open, and what pays for it, is the opening prep window -
+ * see `Schedule.OPENING_PREP_HOURS`. Day 1 has no check-outs; it has the morning
+ * you spend getting the desk ready to receive the first guest of all.
  */
 export function seedOpeningGuests(calendar, house, options = {}) {
   const { today = 1, rate = 0, seed = 1, occupancy = 0.55 } = options;
@@ -247,9 +302,10 @@ export function seedOpeningGuests(calendar, house, options = {}) {
   const sellable = house.filter((room) => !room.outOfInventory);
   const wanted = Math.round(sellable.length * occupancy * 1.4);
   const added = [];
+  const parties = housableParties(sellable);
 
   for (let i = 0; i < wanted; i += 1) {
-    const guests = pick(PARTY_MIX, random(), "guests");
+    const guests = pick(parties, random(), "guests");
     const nights = pick(NIGHTS_MIX, random(), "nights");
     // Somewhere between one night in and their last night, so the morning has
     // departures AND the house has people staying on.
