@@ -121,6 +121,51 @@ export function contentStage(career = {}) {
   return stage;
 }
 
+/**
+ * WHAT A GATE ACTUALLY HANDED YOU, in the words the player would use.
+ *
+ * Operator: "Just after completing the goal give little description of the
+ * unlocked content (you can hire now receptionist, you can do the bellboy work:
+ * moving beds, show up rooms etc.. and like that for all other goals)."
+ *
+ * Two lines, because two different things open and conflating them is what the
+ * old goal line did: WORK is what you may now do yourself, and HIRE is the
+ * person you may now pay to stop doing it. The hire half is deliberately
+ * phrased as an option, never an instruction - it is the player's business
+ * whether they ever take it.
+ */
+export const UNLOCK_NOTES = {
+  1: {
+    work: "You can do the bellboy's work now: show guests up to their room and move the extra beds.",
+    hire: null,
+  },
+  2: {
+    work: "Housekeeping is open to you: turn a room and it can be sold again tonight.",
+    hire: null,
+  },
+  3: {
+    work: "Maintenance is yours: things break now, and a broken room cannot be sold until you fix it.",
+    hire: null,
+  },
+  4: {
+    work: "The phone is live. Take a booking and you are selling rooms you have not filled yet.",
+    hire: null,
+  },
+  5: {
+    work: "Every job in the hotel is open to you.",
+    hire: null,
+  },
+};
+
+/** What HIRING a department opens, once its money-and-work goal is met. */
+export const HIRE_NOTES = {
+  reception: "You can hire a receptionist now - they hold the desk while you are away.",
+  bellboy: "You can hire a bellboy now.",
+  housekeeping: "You can hire housekeeping now.",
+  maintenance: "You can hire a maintenance engineer now.",
+  reservations: "You can hire a reservations manager now.",
+};
+
 /** The gate the player is working on now, or null once the arc is complete. */
 export function nextContentGate(career = {}) {
   const stage = contentStage(career);

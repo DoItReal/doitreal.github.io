@@ -440,6 +440,23 @@
   </div>
 </div>
 
+<!--
+  WHAT YOU JUST UNLOCKED. Operator: "Just after completing the goal give little
+  description of the unlocked content (you can hire now receptionist, you can do
+  the bellboy work: moving beds, show up rooms etc..)". Its own card rather than
+  a toast, because this is the one thing in the game the player asked to be told
+  about in words - and its own veil rather than the star sheet's, which is about
+  the hotel's class and would be clobbered by borrowing it.
+-->
+<div class="veil" id="unlock-veil">
+  <div class="card">
+    <p class="roadmap" id="unlock-kicker">Unlocked</p>
+    <h2 id="unlock-title">New work</h2>
+    <p id="unlock-body"></p>
+    <button id="unlock-ok">Got it</button>
+  </div>
+</div>
+
 <div class="veil" id="star-veil">
   <div class="card">
     <h2 id="star-title">1-star hotel</h2>
@@ -579,7 +596,6 @@
   <button id="dev-skip48">Skip 48h</button>
   <button id="dev-cash">+$10k</button>
   <button id="dev-days">Seed 5 days</button>
-  <button id="dev-endday">End day now</button>
   <button id="dev-unlock">promote</button>
   <button id="dev-wipe">Wipe save</button>
 </div>

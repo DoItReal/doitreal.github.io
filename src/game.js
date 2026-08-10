@@ -30,7 +30,8 @@ import {
   buildProgress, buildRemainingSeconds, certification, createProperty, deserialize,
   REMOTE_TRAINING_MULTIPLIER, TRAINING, availableRoster, devFinishAll, devGrant, devRewind,
   devSeedDays, hire, hireBlocker, lockedDepartments, menuBand, menuPrice, openPositions,
-  recordWork, unlockProgress, nextDepartment, unlockShare, DEPARTMENT_GOALS,
+  recordWork, unlockProgress, nextDepartment, unlockShare, DEPARTMENT_GOALS, nextContentGate,
+  UNLOCK_NOTES, HIRE_NOTES, contentStage,
   recruitmentFee, withRank,
   setMenuPrice, staffCount,
   findStaff, maintenanceSpeedUpSeconds, open as openProperty, resume, roomsUnderConstruction,
@@ -43,6 +44,7 @@ import {
 } from "./property.js";
 import {
   CONDITION_SPEC, FEATURE_SPEC, VIEW_SPEC, LEVELS, reveals, staffCap,
+  dayHours as dayHoursOf,
 } from "./domain/index.js";
 import { UPSELL_POLICY } from "./engine.js";
 import { inHouseAtOpen } from "./domain/Bookings.js";
@@ -277,7 +279,7 @@ function toast(message, ms = 1700) {
  */
 const PANELS = [
   "star-veil", "build-veil", "rooms-veil", "book-veil", "report-veil",
-  "fnb-veil", "price-veil", "lvl-veil", "staff-veil",
+  "fnb-veil", "price-veil", "lvl-veil", "staff-veil", "unlock-veil",
 ];
 
 /** What `paused` was before the first panel opened, or null if none is open. */
@@ -588,8 +590,30 @@ function syncCareer() {
     const stage = effectiveStage(state.property.career, state.shift.today ?? null);
     if (stage > (state.shift.arcStage ?? 0)) {
       state.shift = openContentOnShift(state.shift, stage);
-      toast("New work on the floor.");
+      /**
+       * SAY WHAT JUST OPENED, in the words the player would use. Operator:
+       * "Just after completing the goal give little description of the unlocked
+       * content". A board that quietly grows a new row teaches nothing - the
+       * whole point of moving off the calendar was that the player should be
+       * able to connect what they did to what they got.
+       */
+      const note = UNLOCK_NOTES[stage];
+      if (note && note.work) announce("Unlocked", note.work);
     }
+  }
+
+  /**
+   * AND SEPARATELY: the money-and-work goal that opens a HIRE. Never a goal on
+   * the floor line - "Hiring a receptionist must not be in the goals at all!
+   * This is optional for the player and is unlocked content!" - so it is
+   * announced once, as an option, and then left alone.
+   */
+  for (const role of Object.keys(HIRE_NOTES)) {
+    if (announcedHires.has(role)) continue;
+    if (!unlockProgress(state.property.career, role).met) continue;
+    announcedHires.add(role);
+    localStorage.setItem(KEY_HIRES_SEEN, [...announcedHires].join(","));
+    announce("Unlocked", HIRE_NOTES[role]);
   }
 
   const rank = rankOf(state.property);
@@ -914,112 +938,57 @@ function goalGapText(entry, running) {
   return `${text}   (+$${Math.round(running)} so far today, banks at close)`;
 }
 
+/** What each gate counter is, said the way the player would say it. */
+const GATE_DOING = {
+  checkIns: "check guests in",
+  escorts: "show guests up to their room",
+  cleans: "turn rooms",
+  repairs: "fix what breaks",
+  calls: "take bookings on the phone",
+};
+
 function paintGoal() {
-  const rank = rankOf(state.property);
-  const next = rank.next;
   const label = el("goalrank");
   const need = el("goalneed");
   const bar = el("goalbar");
 
-  if (!next) {
-    label.textContent = "General manager";
-    need.textContent = "the top of the ladder - now grow the group";
-    bar.style.width = "100%";
-    return;
-  }
   /**
-   * THE DEPARTMENT GOAL LEADS, because it is the one the player can go and do.
+   * THE GOAL LINE IS THE CONTENT LADDER, AND NOTHING ELSE.
    *
-   * Operator: "There must be some goals like 10 check-ins and 300$ profit to
-   * unlock receptionist, and is up to the player what he wants to do." A rank
-   * requirement is a consequence; a department goal is an instruction. So the
-   * line shows the nearest department you have not opened, and falls back to the
-   * rank once they are all open.
-   */
-  const staffed = (state.property.roster ?? []).map((person) => person.role);
-  /**
-   * TODAY'S PROFIT IS SHOWN, AND IS NEVER ALLOWED TO DECIDE THAT A GOAL IS MET.
+   * Operator, and this replaces the rank ladder outright: "Instead of workign
+   * different positions, i am the owner of the hotel as the player. I can work
+   * whatever i want. The only condition must be to be unlocked. The goals are
+   * for unlocking content not for different jobs." And, on what was here
+   * before: "After that the next goal was head receptionist... I want this goal
+   * removed at all!" and "Hiring a receptionist must not be in the goals at
+   * all! This is optional for the player and is unlocked content!"
    *
-   * Why it is shown at all. Operator's playtest: "it gets to 16$ more profit
-   * for finishing Open reception object and stays here no matter what i do."
-   * Two things were wrong. The first was real and structural, and is fixed in
-   * `settleDay` - lifetime profit was only ever credited by this file, so days
-   * that closed any other way never counted. The second: profit is a DAY
-   * number, banked at midnight, so even on a day that WAS going to count, the
-   * goal line sat frozen all day and jumped once, at the end. A goal you cannot
-   * watch move is the exact thing domain/Unlocks.js exists to get rid of.
+   * So three things that used to reach this line are gone from it:
    *
-   * THE BUG THAT COST US, and why the running figure may no longer be added
-   * into the career this line is judged against. It used to be: a padded copy
-   * of `career` went into every `nextDepartment` call here. `hireBlocker` in
-   * property.js judges the REAL `property.career`, because unbanked money is
-   * not money yet. So mid-day the padded copy crossed $300 first, this line
-   * said "Hire a receptionist - the goal is met", the Staff screen refused, and
-   * the player was caught between two screens telling them opposite things.
+   *   - the RANK. `LEVELS[n].title` named a job the owner does not hold - he
+   *     owns the building. Rank still exists underneath as the headcount cap
+   *     (see Progression.staffCaps) and still shows on the staff screen, where
+   *     it is about STAFF, which is what the operator says it is for.
+   *   - HIRING. Never a goal. It is one of the things a goal unlocks, and
+   *     whether to take it is the player's business.
+   *   - the department NAME as an instruction. You do not become a bellboy; the
+   *     bellboy's WORK becomes available to you.
    *
-   * The rule now: MET comes from `state.property.career`, the same object
-   * `hireBlocker` reads, so the two cannot disagree. The running figure is a
-   * text qualifier on a gap that is still open - see `goalGapText`. Display
-   * only, as before; it just no longer gets a vote.
+   * What is left is the honest question: what is the next thing this hotel can
+   * do that it cannot do yet, and what has to happen for it to.
    */
-  const running = runningProfit();
-  /**
-   * ONLY DEPARTMENTS THIS RANK COULD EMPLOY. Without this the line tells a
-   * rank-1 player who has answered a few phones to "Open reservations", which
-   * no rank below 4 may employ - an instruction that leads nowhere, and day 5
-   * hands out phone calls by design. See nextDepartment.
-   */
-  const level = rank.level;
-  const employable = Object.keys(DEPARTMENT_GOALS).filter((role) => staffCap(level, role) > 0);
-  const department = nextDepartment(state.property.career, staffed, { employable });
-  /**
-   * THE EARNED-BUT-UNTAKEN OFFER IS A NOTE, NOT THE GOAL. See nextDepartment's
-   * skipMet. The player may never want to hire - working every job yourself and
-   * paying nobody is a legitimate way to play - so the line names the next thing
-   * to DO and mentions the standing offer beside it.
-   */
-  const earned = nextDepartment(state.property.career, staffed, { employable });
-  const ahead = nextDepartment(state.property.career, staffed, { employable, skipMet: true });
-  if (earned && earned.met && ahead) {
-    label.textContent = `Open ${ahead.role}`;
-    need.textContent = goalGapText(ahead, running)
-      + `   (a ${earned.role} is waiting on the Staff screen whenever you want one)`;
-    bar.style.width =
-      `${Math.max(0, Math.min(100, unlockShare(state.property.career, ahead.role) * 100))}%`;
-    return;
-  }
-  if (department && !department.met) {
-    label.textContent = `Open ${department.role}`;
-    need.textContent = goalGapText(department, running);
-    /**
-     * BOUND BY WHICHEVER HALF IS FURTHEST BEHIND. This used to read the WORK gap
-     * alone, and a met gap is absent from the list - so the bar hit 100% the
-     * moment the check-ins were done and sat there while the money was still
-     * short. The operator saw a full bar over "$16 more profit". See unlockShare.
-     *
-     * Against the BANKED career, like everything else on this line - a bar that
-     * fills on unbanked money is the same lie in a thinner shape.
-     */
-    bar.style.width =
-      `${Math.max(0, Math.min(100, unlockShare(state.property.career, department.role) * 100))}%`;
-    return;
-  }
-  if (department && department.met) {
-    label.textContent = `Hire a ${department.role}`;
-    need.textContent = "the goal is met - the position is open on the Staff screen";
+  const gate = nextContentGate(state.property.career);
+  if (!gate) {
+    label.textContent = "Every job is open";
+    need.textContent = "the whole floor is yours - hire whoever you want to stop doing it yourself";
     bar.style.width = "100%";
     return;
   }
 
-  const gaps = rank.blockers(state.property);
-  label.textContent = `Next: ${next.title}`;
-  need.textContent = gaps.length
-    ? gaps.map((g) => g.text).join("  -  ")
-    : "ready - it lands at the end of the day";
-  // Experience is the one gap with a meaningful ratio behind it; the others are
-  // thresholds you either meet or do not, and a bar would imply otherwise.
-  bar.style.width = `${Math.max(0, Math.min(100,
-    (rank.experience / Math.max(1, next.xp)) * 100))}%`;
+  const have = Math.max(0, state.property.career[gate.counter] ?? 0);
+  label.textContent = `Unlock ${gate.opens}`;
+  need.textContent = `${gate.need - have} more to ${GATE_DOING[gate.counter] ?? gate.counter}`;
+  bar.style.width = `${Math.max(0, Math.min(100, (have / gate.need) * 100))}%`;
 }
 
 function displayClock() {
@@ -1378,8 +1347,26 @@ function frame(now) {
   el("clock").textContent = displayClock().label;
   if (!shift || state.paused || shift.over) { state.lastFrame = now; return; }
 
-  const dt = Math.min(0.25, (now - state.lastFrame) / 1000) * state.speed;
+  const realSec = Math.min(0.25, (now - state.lastFrame) / 1000);
+  const dt = realSec * state.speed;
   state.lastFrame = now;
+  /**
+   * SPEED HAS TO MOVE THE HOTEL, NOT JUST THE FLOOR.
+   *
+   * Operator: "when i switch the speed of the time it does nothing". It was
+   * scaling this shift's tick and nothing else, so the jobs ran faster while the
+   * CLOCK FACE - which is drawn from the property timeline, on the wall clock -
+   * carried on at 1x. Nothing visible changed, and the two clocks drifted apart,
+   * which is the bug we had just finished removing.
+   *
+   * Handing the extra time back to `lastSeenAt` is the same lever `devRewind`
+   * pulls: the property is simply seen to have been running longer. So the clock
+   * face, the day rollover and the offline settle all move at the same speed as
+   * the floor, because they are all reading one timeline.
+   */
+  if (state.speed > 1) {
+    state.property.lastSeenAt -= (state.speed - 1) * realSec * 1000;
+  }
   const before = {
     money: shift.money, walked: shift.walkedOut, tips: shift.tips, over: shift.overbooked,
     checkedIn: shift.checkedIn,
@@ -2123,6 +2110,7 @@ el("starbtn").addEventListener("click", () => {
   openPanel("star-veil");
 });
 el("star-close").addEventListener("click", () => closePanel("star-veil"));
+el("unlock-ok").addEventListener("click", () => closePanel("unlock-veil"));
 
 /* --------------------------------------------------------------- build -- */
 /**
@@ -3537,6 +3525,30 @@ const INTRO_BEATS = [
 
 let introBeat = 0;
 
+/**
+ * Hire offers already announced, so the news is told once rather than every
+ * frame after it becomes true. Persisted, or a reload re-announces everything
+ * the player has ever unlocked.
+ */
+const KEY_HIRES_SEEN = "hc_hires_announced";
+const announcedHires = new Set(
+  (localStorage.getItem(KEY_HIRES_SEEN) || "").split(",").filter(Boolean),
+);
+
+/**
+ * A piece of news worth reading, as opposed to a toast worth glancing at.
+ *
+ * Unlocks are the one thing in this game the player asked to be told about in
+ * words, so they get the card rather than the corner: "Just after completing
+ * the goal give little description of the unlocked content".
+ */
+function announce(kicker, body) {
+  el("unlock-kicker").textContent = kicker;
+  el("unlock-title").textContent = "New work on the floor";
+  el("unlock-body").textContent = body;
+  openPanel("unlock-veil");
+}
+
 function paintIntro() {
   const beat = INTRO_BEATS[introBeat];
   el("tut-step").textContent = beat.step;
@@ -3621,7 +3633,19 @@ function devApply(label, mutate) {
 
 /** Skip time the honest way: rewind the clocks, then resume as normal. */
 function devSkip(hours) {
-  state.property = devRewind(state.property, hours * 3600);
+  /**
+   * IN GAME HOURS, WHICH IS WHAT THE BUTTON SAYS. Operator: "skip 1h, 8h ...
+   * must be for game time, not real time."
+   *
+   * `devRewind` takes REAL seconds, and a real hour is not a game hour: day 1
+   * compresses sixteen game hours into 150 real seconds, so "skip 1h" was
+   * rewinding 3600 real seconds and throwing the player weeks down the
+   * timeline. One game hour is dayLength/dayHours real seconds - the same
+   * conversion Schedule.hourSeconds does, asked of the property's own clock.
+   */
+  const clock = clockOf(state.property);
+  const realSeconds = hours * (clock.dayLength / Math.max(1, dayHoursOf(clock.day)));
+  state.property = devRewind(state.property, realSeconds);
   saveProperty();
   const back = returnToProperty();
   render();
@@ -3650,14 +3674,15 @@ if (DEV) {
   el("dev-days").addEventListener("click", () => devApply("5 trading days seeded",
     (p) => devSeedDays(p, 400, 5, Date.now())));
 
-  // Ends the CURRENT day immediately, through the normal end-of-day path.
-  el("dev-endday").addEventListener("click", () => {
-    if (!state.shift || state.shift.over) { toast("[dev] no day running"); return; }
-    state.shift = { ...state.shift, time: state.shift.config.durationSec, over: true };
-    endShift();
-    render();
-    analytics.track("dev_tool", { action: "end_day" });
-  });
+  /**
+   * NO "END THE DAY" BUTTON. Operator: "End the day i dont think is needed at
+   * all. We do not end the day we just move to the next one, its a live game not
+   * turn based (day based) game."
+   *
+   * He is right, and it was the last thing in the game that treated a day as a
+   * turn to be handed in. Skipping time does everything it did and does it
+   * through the ordinary path.
+   */
 
   /**
    * PROMOTE. "Unlock all shifts" meant something when there was a shift select;
