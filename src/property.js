@@ -441,7 +441,24 @@ export function hire(property, role) {
  * outlet can use. There is no point offering a bartender to a hotel with no bar.
  */
 export function openPositions(property) {
-  const ladder = (property.learnedRoles || []).filter((role) => !findStaff(property, role));
+  /**
+   * WHAT THE STAFF SCREEN OFFERS, FROM THE SAME LADDER THAT OPENS THE WORK.
+   *
+   * THE BUG, from the operator: "i hired the receptionist, did the 4 show up
+   * rooms and started the next goal. but now the bellboy is still locked."
+   *
+   * `hireBlocker` had been moved onto the content ladder and this had not, so
+   * the two disagreed about the same question - again. This read
+   * `property.learnedRoles`, the invisible list `hireBlocker`'s own comment says
+   * was replaced, and that list only ever receives the RANK's role
+   * (applyCareerBaseline). At rank 1 it holds "reception" and nothing else, so
+   * the screen could never offer a bellboy however many guests the player had
+   * walked upstairs.
+   *
+   * One question, one answer: if you have learned the job, the position is open.
+   */
+  const ladder = Object.keys(HIRE_STAGE)
+    .filter((role) => hireUnlocked(property.career, role) && !findStaff(property, role));
   const wanted = new Set();
   for (const facility of property.facilities) {
     for (const role of outletBrigade(facility)) wanted.add(role);
@@ -489,25 +506,20 @@ export function recordWork(property, { experience = 0, career = {}, profit = 0 }
 }
 
 export function lockedDepartments(property) {
-  const level = rankOf(property).level;
-  const learned = property.learnedRoles || [];
+  /**
+   * WHAT IS NOT OPEN YET, AND THE ONE THING THAT OPENS IT.
+   *
+   * The reason used to lead with RANK - "From Head receptionist" - which was
+   * both a deadlock (that rank requires the hire it was refusing) and, as the
+   * operator put it, a job title the owner does not hold. There is only one
+   * gate now: have you done the work. So the reason is always something the
+   * player can go and do today, which is the whole point of `hireGap`.
+   */
   const locked = [];
-  for (const role of Object.values(ROLE)) {
-    if (isFnbRole(role)) continue;
+  for (const role of Object.keys(HIRE_STAGE)) {
     if (findStaff(property, role)) continue;
-    const capped = staffCap(level, role) === 0;
-    if (!capped && learned.includes(role)) continue;
-    const opensAt = unlocksAt(role);
-    locked.push({
-      role,
-      opensAt,
-      // Rank first, because it is the one the player cannot act on today. Being
-      // told to work a job yourself when your rank could not employ one anyway
-      // is an instruction that leads nowhere.
-      reason: capped
-        ? (opensAt ? `From ${LEVELS[opensAt].title}` : "Never offered")
-        : "Work that job yourself first",
-    });
+    if (hireUnlocked(property.career, role)) continue;
+    locked.push({ role, opensAt: null, reason: hireGap(property.career, role) });
   }
   return locked;
 }

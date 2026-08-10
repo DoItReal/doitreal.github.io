@@ -201,10 +201,21 @@ export function hireGap(career = {}, role) {
   if (hireUnlocked(career, role)) return null;
   const need = HIRE_STAGE[role];
   // The gate the player is standing on, on the way to that stage.
-  const gate = CONTENT_GATES.find((g) => g.stage === Math.min(need, contentStage(career) + 1));
+  const at = contentStage(career);
+  const gate = CONTENT_GATES.find((g) => g.stage === Math.min(need, at + 1));
   if (!gate) return "Not yet.";
   const have = Math.max(0, career[gate.counter] ?? 0);
-  return `${Math.max(0, gate.need - have)} more to ${GATE_DOING[gate.counter] ?? gate.counter}`;
+  const step = `${Math.max(0, gate.need - have)} more to ${GATE_DOING[gate.counter] ?? gate.counter}`;
+  /**
+   * SAY WHEN IT IS FURTHER THAN THE NEXT STEP. A department three stages away
+   * was being labelled with the very next gate - "maintenance: 4 more to turn
+   * rooms" - which reads as a promise that turning four rooms hires an engineer.
+   * The next step is still the right instruction; it just must not pretend to be
+   * the last one.
+   */
+  const after = need - at - 1;
+  if (after <= 0) return step;
+  return `${step}, then ${after} more job${after === 1 ? "" : "s"} to learn`;
 }
 
 /** What each gate counter is, said the way the player would say it. */

@@ -355,7 +355,9 @@
     </button>
     <button class="ident" id="starbtn">
       <div class="hotelname"><span id="starrow" class="starrow"></span><em id="hotelclass">1-star</em></div>
-      <div class="rolerow"><b id="ratingnow">3.5</b> rated &middot; you: <b id="role">Receptionist</b></div>
+      <!-- The owner has no job title. What the player has is a RANK, which is the
+     headcount they may run - see the note on el("role") in game.js. -->
+      <div class="rolerow"><b id="ratingnow">3.5</b> rated &middot; <b id="role">Owner</b></div>
     </button>
     <span class="clock" id="clock">1:45</span>
     <button class="iconbtn" id="speed" aria-label="Playback speed">1x</button>

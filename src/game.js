@@ -1013,7 +1013,19 @@ function paintRestDay() {
   el("clock").classList.remove("urgent");
   el("lvlnum").textContent = String(rankOf(state.property).level);
   el("daytime").textContent = "rank";
-  el("role").textContent = LEVELS[rankOf(state.property).level].title;
+  /**
+   * THE OWNER HAS NO JOB TITLE.
+   *
+   * Operator: "the UI says you: Receptionist which is not right. i thought we
+   * removed this one already. The player has no role he has just level/rank
+   * which he increases."
+   *
+   * This printed `LEVELS[n].title` - Receptionist, Head receptionist, Duty
+   * manager - which is the STAFF ladder, and naming the player with it is the
+   * same mistake the goal line was carrying. What a rank means to the player is
+   * how much hotel they may run, so that is what it says.
+   */
+  el("role").textContent = `Owner - rank ${rankOf(state.property).level}`;
   el("bank").textContent = `$${state.property.bank}`;
   el("ratingnow").textContent = rating().toFixed(1);
   paintStars(certification(state.property).stars);
@@ -1078,7 +1090,8 @@ function paint() {
   el("clock").classList.remove("urgent");
   el("lvlnum").textContent = String(rankOf(state.property).level);
   el("daytime").textContent = "rank";
-  el("role").textContent = config.title;
+  // See the note in paintRestDay: a rank, never a job title.
+  el("role").textContent = `Owner - rank ${rankOf(state.property).level}`;
   paintStars(result.stars);
   el("hotelclass").textContent = `${result.stars}-star`;
   el("ratingnow").textContent = rating().toFixed(1);
