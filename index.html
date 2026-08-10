@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hotel Career</title>
+<meta name="description" content="You own a 1-star hotel and you are the receptionist. Learn every job, then hire someone better than you.">
+<meta name="theme-color" content="#1e1b18">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231e1b18'/><rect x='14' y='16' width='36' height='34' rx='3' fill='%23c8a86a'/><rect x='20' y='22' width='7' height='7' fill='%231e1b18'/><rect x='31' y='22' width='7' height='7' fill='%231e1b18'/><rect x='42' y='22' width='4' height='7' fill='%231e1b18'/><rect x='27' y='36' width='10' height='14' fill='%231e1b18'/></svg>">
+<style>
+  :root{
+    --bg:#1e1b18; --bg2:#141210; --panel:#292420; --panel2:#332d28; --sunk:rgba(0,0,0,.24);
+    --ink:#f4ede4; --muted:#9c8f85; --line:#403933;
+    --gold:#c8a86a; --good:#6d9d74; --warn:#d8b24a; --bad:#cf6a5f; --blue:#6f9bb5;
+    --shadow:0 2px 6px rgba(0,0,0,.35),0 14px 34px rgba(0,0,0,.3);
+    --r:13px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(120% 80% at 50% 0%,var(--bg) 0%,var(--bg2) 100%) fixed;
+    color:var(--ink);
+    font:16px/1.45 ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI Variable",'Segoe UI',sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    padding:max(8px,env(safe-area-inset-top)) 11px max(11px,env(safe-area-inset-bottom));
+    overscroll-behavior:none;user-select:none}
+  .wrap{width:100%;max-width:520px;flex:1;display:flex;flex-direction:column;min-height:0;gap:9px}
+
+  /* ---------- header ---------- */
+  header{display:flex;align-items:center;gap:8px;flex:none}
+  h1{font-size:15.5px;margin:0;font-weight:650;letter-spacing:-.02em;white-space:nowrap}
+  .role{font-size:11px;color:var(--gold);border:1px solid var(--line);background:var(--panel);
+    border-radius:99px;padding:3px 9px;white-space:nowrap}
+  .lvl{flex:none;width:40px;padding:4px 0;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel);color:var(--ink);cursor:pointer;font:inherit;text-align:center;line-height:1.1}
+  .lvl b{display:block;font-size:17px;font-weight:800;font-variant-numeric:tabular-nums}
+  .lvl span{display:block;font-size:8.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+  .ident{flex:1;min-width:0;background:none;border:none;color:inherit;font:inherit;
+    text-align:left;padding:0;cursor:pointer}
+  .hotelname{display:flex;align-items:center;gap:6px}
+  .starrow{display:inline-flex;gap:2px}
+  .starrow i{width:8px;height:8px;background:var(--line);display:block;
+    clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)}
+  .starrow i.on{background:var(--gold)}
+  .hotelname em{font-size:11px;color:var(--muted);font-style:normal}
+  .rolerow{font-size:12px;color:var(--muted)}
+  .rolerow b{color:var(--gold);font-weight:600}
+
+  .bankrow{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);flex:none;
+    padding:5px 9px;background:var(--panel);border:1px solid var(--line);border-radius:9px}
+  .bankrow b{color:var(--ink);font-variant-numeric:tabular-nums;font-size:13px}
+  .bankrow .wagenote{margin-left:auto;text-align:right}
+
+  .lvlgrid{display:flex;flex-direction:column;gap:6px;text-align:left;margin-bottom:12px}
+  .lvlrow{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:10px;
+    background:var(--sunk);border:1px solid transparent;cursor:pointer}
+  .lvlrow.current{border-color:var(--gold)}
+  .lvlrow.locked{opacity:.4;cursor:default}
+  .lvlrow i{font-style:normal;font-weight:800;font-size:14px;width:20px;text-align:center}
+  .lvlrow .what{flex:1;min-width:0}
+  .lvlrow .what b{display:block;font-size:13px}
+  .lvlrow .what span{font-size:10.5px;color:var(--muted)}
+  .clock{margin-left:auto;font-variant-numeric:tabular-nums;font-size:16px;font-weight:700;
+    padding:2px 8px;border-radius:8px;transition:background .3s,color .3s}
+  .clock.urgent{background:var(--bad);color:#fff;animation:tick 1s steps(2) infinite}
+  @keyframes tick{50%{opacity:.55}}
+  .iconbtn{width:30px;height:30px;border-radius:9px;border:1px solid var(--line);background:var(--panel);
+    color:var(--muted);font-size:12px;display:grid;place-items:center;padding:0;cursor:pointer;flex:none}
+
+  /* ---------- meters ---------- */
+  .meters{display:flex;gap:9px;flex:none}
+  .meter{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:7px 9px}
+  .meter .top{display:flex;align-items:baseline;gap:5px;font-size:10.5px;color:var(--muted);margin-bottom:5px}
+  .meter b{color:var(--ink);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+  .bar{height:6px;border-radius:99px;background:var(--sunk);overflow:hidden;position:relative}
+  .bar>span{display:block;height:100%;border-radius:99px;background:var(--good);
+    transition:width .35s cubic-bezier(.2,.9,.3,1)}
+  .bar>span.short{background:var(--bad)}
+  .bar>em{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--gold)}
+
+  /* ---------- floor ---------- */
+  .rooms{display:flex;gap:5px;flex:none}
+  .room{flex:1;border-radius:9px;border:1px solid var(--line);background:var(--panel);
+    padding:5px 3px;text-align:center;transition:border-color .2s,background .2s}
+  .room b{display:block;font-size:12.5px;font-weight:700}
+  .room span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .room.occupied{background:var(--panel2);border-color:#5a4f44}
+  .room.dirty{background:rgba(216,178,74,.13);border-color:var(--warn)}
+  .room.broken{background:rgba(207,106,95,.14);border-color:var(--bad)}
+  .room.needsme{animation:needs 1.4s ease-in-out infinite}
+  .room.needsme span{color:var(--gold);font-weight:700}
+  @keyframes needs{0%,100%{box-shadow:0 0 0 0 rgba(200,168,106,.55)}50%{box-shadow:0 0 0 3px rgba(200,168,106,0)}}
+
+  .bankbtn{cursor:pointer}
+  #today.neg{color:var(--bad)}
+  .bankbtn b{text-decoration:underline;text-decoration-style:dotted;
+    text-underline-offset:3px}
+
+  /* ---------- the book ---------- */
+  .book{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);flex:none;
+    padding:6px 9px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .book b{color:var(--ink);font-variant-numeric:tabular-nums}
+  .book.tight{border-color:var(--warn);color:var(--warn)}
+  .book .over{color:var(--bad);margin-left:auto;font-weight:600}
+
+  /* ---------- the jobs list ---------- */
+  main{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}
+  .jobshead{display:flex;align-items:baseline;gap:6px;font-size:10.5px;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.07em;flex:none}
+  .jobs{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:8px;
+    box-shadow:var(--shadow);scrollbar-width:thin}
+  .job{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:11px;
+    background:var(--panel2);border:1px solid transparent;cursor:pointer;position:relative;
+    overflow:hidden;flex:none;transition:border-color .18s,background .18s,transform .1s}
+  .job:active{transform:scale(.985)}
+  .badge{width:34px;height:30px;border-radius:8px;display:grid;place-items:center;flex:none;
+    font-size:11px;font-weight:800;letter-spacing:.03em;color:#1c1815;background:var(--muted)}
+  .badge.in{background:var(--good)} .badge.up{background:var(--gold)}
+  .badge.hk{background:var(--warn)} .badge.mt{background:var(--bad)}
+  .badge.tel{background:var(--blue)}
+  .badge.bed{background:#9a86c4}
+  .badge.out{background:#5f9ea0} .badge.req{background:#c48a6a}
+  .job .txt{flex:1;min-width:0}
+  .job .name{font-size:14px;font-weight:600}
+  .job .sub{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .job .where{font-size:10.5px;color:var(--muted);flex:none;text-align:right;min-width:38px}
+  .job .pay{font-size:12px;font-weight:700;color:var(--good);flex:none;min-width:44px;text-align:right;
+    font-variant-numeric:tabular-nums}
+  .job .fuse{position:absolute;left:0;bottom:0;height:3px;width:100%;background:var(--good);
+    transition:width .2s linear}
+  .job.warn .fuse{background:var(--warn)}
+  .job.crit{border-color:var(--bad)} .job.crit .fuse{background:var(--bad)}
+  .job.crit .badge{animation:shake .5s ease-in-out infinite}
+  @keyframes shake{25%{transform:translateX(-1.5px)}75%{transform:translateX(1.5px)}}
+  .job.optional{background:transparent;border-color:var(--line);border-style:dashed}
+  .job.optional .pay{color:var(--gold)}
+  .goalrow{margin:0 12px 6px;padding:6px 9px;border:1px solid var(--line);border-radius:10px;
+    background:rgba(255,255,255,.02)}
+  .goalrow .top{display:flex;align-items:baseline;gap:8px;font-size:11px}
+  .goalrow .top b{font-size:12px;color:var(--gold)}
+  .goalrow .top span{margin-left:auto;color:var(--muted);text-align:right;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .goalrow .bar{margin-top:4px;height:3px;border-radius:2px;background:var(--line);overflow:hidden}
+  .goalrow .bar span{display:block;height:100%;background:var(--gold);
+    transition:width .4s ease}
+  .job.blocked{opacity:.4}
+  /* You are on another job. It is queued, not tappable - so it must not shake,
+     must not glow, and must not look like the row above that you CAN take. */
+  .job.waiting{opacity:.5;border-style:dashed}
+  .job.waiting .badge{animation:none}
+  .job.waiting .pay{opacity:.6}
+  .job.mine{border-color:var(--gold);background:rgba(200,168,106,.11)}
+  .job.mine .fuse{background:var(--gold)}
+  .job.mine .pay{color:var(--gold)}
+  .job.appear{animation:slidein .26s cubic-bezier(.2,.9,.3,1)}
+  @keyframes slidein{from{opacity:0;transform:translateY(-7px)}to{opacity:1;transform:none}}
+  .job.flash{animation:flash .55s ease-in-out 2}
+  @keyframes flash{50%{border-color:var(--gold);background:rgba(200,168,106,.24)}}
+  .empty{color:var(--muted);font-size:12.5px;text-align:center;padding:22px 10px}
+
+  /* ---------- the crew ---------- */
+  .crew{display:flex;gap:6px;overflow-x:auto;flex:none;scrollbar-width:none}
+  .crew::-webkit-scrollbar{display:none}
+  .member{flex:none;min-width:74px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:6px 7px;transition:border-color .2s}
+  .member .top{display:flex;align-items:center;gap:5px;margin-bottom:4px}
+  .member i{font-size:8.5px;font-weight:800;font-style:normal;background:var(--sunk);color:var(--muted);
+    border-radius:4px;padding:1px 4px}
+  .member b{font-size:10.5px;font-weight:600;text-transform:capitalize;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .member .ebar{height:3px;border-radius:99px;background:var(--sunk);overflow:hidden}
+  .member .ebar span{display:block;height:100%;background:var(--good);border-radius:99px;
+    transition:width .3s linear}
+  .member em{font-size:9px;color:var(--muted);font-style:normal;display:block;margin-top:3px}
+  .member.working{border-color:var(--gold)}
+  .member.tired .ebar span{background:var(--bad)}
+  .member.tired em{color:var(--bad)}
+
+  /* ---------- controls ---------- */
+  .controls{display:flex;gap:7px;flex:none}
+  button.ctl{flex:1;font:inherit;font-size:13.5px;font-weight:550;padding:11px 5px;border-radius:11px;
+    border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;
+    transition:transform .1s}
+  button.ctl:active{transform:scale(.98)}
+  button.primary{background:var(--gold);border-color:var(--gold);color:#241d12}
+  footer{font-size:10px;color:var(--muted);text-align:center;flex:none}
+  footer a{color:var(--muted)}
+
+  /* ---------- overlays ---------- */
+  .veil{position:fixed;inset:0;background:rgba(8,7,6,.68);backdrop-filter:blur(3px);display:grid;
+    place-items:center;padding:18px;z-index:20;opacity:0;pointer-events:none;transition:opacity .22s}
+  .veil.show{opacity:1;pointer-events:auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px 20px;
+    max-width:352px;width:100%;box-shadow:var(--shadow);text-align:center;
+    transform:translateY(10px) scale(.97);transition:transform .26s cubic-bezier(.2,.9,.3,1)}
+  .veil.show .card{transform:none}
+  .card h2{margin:0 0 5px;font-size:20px;letter-spacing:-.02em}
+  .card p{margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5}
+  .stats{display:flex;gap:6px;margin-bottom:14px}
+  .stat{flex:1;background:var(--sunk);border-radius:10px;padding:8px 4px}
+  .stat b{display:block;font-size:16px;font-variant-numeric:tabular-nums}
+  .stat span{font-size:9.5px;color:var(--muted)}
+  .card button{width:100%;font:inherit;font-size:14.5px;font-weight:600;padding:12px;border-radius:11px;
+    border:none;background:var(--gold);color:#241d12;cursor:pointer}
+  .card button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line);margin-top:6px}
+  .hirebox{background:var(--sunk);border-radius:11px;padding:11px;margin-bottom:14px;text-align:left}
+  .hirebox h3{margin:0 0 3px;font-size:13px;color:var(--gold);text-transform:capitalize}
+  .hirebox p{margin:0;font-size:11.5px}
+  .sheet{max-height:58vh;overflow-y:auto;text-align:left}
+  .row{display:flex;align-items:center;gap:8px;padding:9px;border-radius:10px;background:var(--sunk);
+    margin-bottom:6px}
+  .row .who{flex:1;min-width:0}
+  .row .who b{display:block;font-size:13px;text-transform:capitalize}
+  .row .who span{font-size:10.5px;color:var(--muted)}
+  .row button{width:auto;padding:7px 10px;font-size:11.5px;border-radius:8px}
+  .row button:disabled{opacity:.35;cursor:default}
+  .roadmap{color:var(--muted);font-size:11px;margin-top:9px}
+  .books{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;margin:-6px 0 13px}
+
+  .grouphead{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
+    padding:5px 2px 1px;flex:none}
+  .grouphead.staff{color:var(--blue)} .grouphead.blocked{color:var(--bad)}
+  .job.onstaff{background:transparent;border-color:var(--line);opacity:.72}
+  .job.onstaff .pay{color:var(--blue)}
+  .job.blocked{opacity:.45;cursor:default;background:transparent;border:1px dashed var(--bad)}
+  .job.blocked .fuse{background:var(--bad)}
+
+  .pricebig{display:flex;align-items:baseline;justify-content:center;gap:2px;margin:2px 0 6px}
+  .pricebig span{font-size:19px;color:var(--muted)}
+  .pricebig b{font-size:40px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  input[type=range]{width:100%;margin:2px 0 14px;accent-color:var(--gold)}
+  .pricehints{display:flex;gap:6px;margin-bottom:12px}
+  .pricehints div{flex:1;background:var(--sunk);border-radius:10px;padding:8px 4px}
+  .pricehints b{display:block;font-size:13px}
+  .pricehints span{font-size:9px;color:var(--muted)}
+
+  .revrow{display:flex;gap:5px;margin-bottom:12px}
+  .revrow div{flex:1;background:var(--sunk);border-radius:9px;padding:7px 3px}
+  .revrow b{display:block;font-size:14px;font-variant-numeric:tabular-nums}
+  .revrow span{font-size:8.5px;color:var(--muted);text-transform:capitalize}
+  .ratingbig{font-size:15px;font-weight:700;color:var(--gold);margin-bottom:8px}
+
+  /* ---------- running costs ---------- */
+  .costrow b{color:var(--warn)}
+  .costrow .wagenote{color:var(--gold)}
+
+  /* ---------- dev panel (only wired when the page is opened with #dev) ---- */
+  .devbar{position:fixed;left:0;right:0;bottom:0;z-index:30;display:none;flex-wrap:wrap;gap:4px;
+    padding:6px 7px calc(6px + env(safe-area-inset-bottom));background:#3a1d1d;
+    border-top:2px solid var(--bad);justify-content:center}
+  .devbar.on{display:flex}
+  .devbar button{font:inherit;font-size:10.5px;font-weight:600;padding:5px 8px;border-radius:7px;
+    border:1px solid #7d3b36;background:#512826;color:#ffd9d4;cursor:pointer}
+  .devbar button:active{transform:scale(.96)}
+  .devbar .tag{font-size:9px;color:#e0a49c;align-self:center;letter-spacing:.09em;
+    text-transform:uppercase;padding-right:4px}
+  body.devon{padding-bottom:64px}
+
+  .modes{display:flex;gap:6px;margin:0 0 6px}
+  .modes button{flex:1;font-size:11px;padding:7px 4px}
+  .modes button.off{background:transparent;color:var(--muted);border:1px solid var(--line)}
+
+  /* ---------- building work ---------- */
+  .row.working{background:rgba(200,168,106,.10);border:1px solid var(--line)}
+  .row.cantafford{opacity:.5}
+  .row .cost{font-size:12px;font-weight:700;color:var(--gold);flex:none;text-align:right;
+    min-width:52px;font-variant-numeric:tabular-nums}
+  .row .who .why{color:var(--bad)}
+  .wbar{height:4px;border-radius:99px;background:var(--sunk);overflow:hidden;margin-top:5px}
+  .wbar span{display:block;height:100%;background:var(--gold);border-radius:99px;
+    transition:width .4s linear}
+  /* ---------- the book ---------- */
+  .book{cursor:pointer}
+  .card.wide{max-width:min(96vw,720px)}
+  .gridscroll{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+    padding-bottom:6px}
+  .bookgrid{display:grid;grid-template-columns:38px repeat(var(--days),26px);
+    gap:2px;min-width:min-content}
+  .gcell{height:20px;border-radius:3px;background:var(--sunk);font-size:9px;
+    display:flex;align-items:center;justify-content:center;color:var(--muted);
+    font-variant-numeric:tabular-nums}
+  .gcell.ghead{background:transparent;font-size:9.5px;color:var(--muted)}
+  .gcell.gtoday{color:var(--gold);font-weight:700}
+  .gcell.gcorner{justify-content:flex-start;padding-left:2px}
+  .gcell.glabel{background:transparent;color:var(--gold);font-weight:600;
+    justify-content:flex-start;padding-left:2px}
+  .gcell.gfree{background:var(--sunk)}
+  .gcell.gheld{background:rgba(200,168,106,.34);color:#241d12;font-weight:700}
+  .gcell.gstart{box-shadow:inset 2px 0 0 var(--gold)}
+  .gcell.gshut{background:repeating-linear-gradient(45deg,var(--sunk),var(--sunk) 3px,
+    rgba(200,90,80,.3) 3px,rgba(200,90,80,.3) 6px)}
+
+  /* ---------- the building ---------- */
+  .rooms{cursor:pointer}
+  .roomrow{align-items:center;gap:9px}
+  .roomrow .door{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;
+    color:var(--gold);flex:none;min-width:38px}
+  .roomrow .who b{font-size:12.5px}
+  .roomrow .who span{font-size:10.5px}
+  .roomrow .cost{min-width:44px}
+  .roomrow .cost.over{color:var(--gold)}
+  .roomrow .cost.under{color:var(--muted)}
+  .roomrow .pill{flex:none;font-style:normal;font-size:9px;text-transform:uppercase;
+    letter-spacing:.07em;padding:3px 7px;border-radius:99px;background:var(--sunk);
+    color:var(--muted);min-width:42px;text-align:center}
+  .roomrow .pill.occupied{background:rgba(200,168,106,.16);color:var(--gold)}
+  .roomrow .pill.dirty{background:rgba(214,138,92,.16);color:#d68a5c}
+  .roomrow .pill.broken{background:rgba(200,90,80,.16);color:var(--bad)}
+  .roomrow.out_of_service{opacity:.55}
+
+  /* ---------- food and beverage ---------- */
+  .menurow{display:flex;align-items:center;gap:9px;padding:2px 2px 0}
+  .menurow label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--muted);flex:none}
+  .menurow input[type=range]{margin:0;flex:1}
+  .menurow b{font-size:12px;font-variant-numeric:tabular-nums;flex:none;min-width:74px;
+    text-align:right;color:var(--gold)}
+  .sectionhead{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
+    padding:8px 2px 4px}
+  .awayrow{display:flex;gap:8px;align-items:baseline;font-size:11.5px;color:var(--muted);
+    padding:5px 2px;border-bottom:1px solid var(--line)}
+  .awayrow b{color:var(--ink);font-variant-numeric:tabular-nums;margin-left:auto}
+  .awayrow.dark b{color:var(--bad)}
+
+  .toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);background:var(--ink);
+    color:var(--bg);padding:9px 15px;border-radius:99px;font-size:12.5px;opacity:0;
+    pointer-events:none;transition:opacity .2s;z-index:25;max-width:88vw;text-align:center}
+  .toast.show{opacity:1}
+  .float{position:fixed;font-size:14px;font-weight:700;pointer-events:none;z-index:24;
+    animation:rise .9s ease-out forwards}
+  .float.good{color:var(--good)} .float.bad{color:var(--bad)}
+  @keyframes rise{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-34px)}}
+
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <button class="lvl" id="lvlbtn" aria-label="Choose a shift">
+      <b id="lvlnum">1</b><span id="daytime">day</span>
+    </button>
+    <button class="ident" id="starbtn">
+      <div class="hotelname"><span id="starrow" class="starrow"></span><em id="hotelclass">1-star</em></div>
+      <div class="rolerow"><b id="ratingnow">3.5</b> rated &middot; you: <b id="role">Receptionist</b></div>
+    </button>
+    <span class="clock" id="clock">1:45</span>
+    <button class="iconbtn" id="speed" aria-label="Playback speed">1x</button>
+    <button class="iconbtn" id="sound" aria-label="Toggle sound">&#9834;</button>
+  </header>
+
+  <div class="meters">
+    <div class="meter">
+      <div class="top"><b id="money">$0</b><span id="mgoal">rev $0  exp $0</span></div>
+      <div class="bar"><span id="mbar" style="width:0%"></span></div>
+    </div>
+    <div class="meter">
+      <div class="top"><b id="sat">70</b><span>guest satisfaction</span></div>
+      <div class="bar"><span id="sbar" style="width:70%"></span><em id="smark" style="left:78%"></em></div>
+    </div>
+  </div>
+
+  <!-- B3. WHAT YOU ARE WORKING TOWARD, always on screen. Pass/fail was deleted
+       and nothing replaced it, so the game stated no goal anywhere and the rank
+       sheet that held one sat behind an unlabelled button. This is not an
+       objective and it cannot be failed - it is the rank sheet's own numbers,
+       surfaced where the player already looks. -->
+  <div class="goalrow" id="goalrow">
+    <div class="top"><b id="goalrank">Next rank</b><span id="goalneed"></span></div>
+    <div class="bar"><span id="goalbar" style="width:0%"></span></div>
+  </div>
+
+  <div class="bankrow">
+    <span class="purse">Cash <b id="money2">$0</b></span>
+    <span class="bankbtn">Bank <b id="bank">$0</b></span>
+    <span class="bankbtn">Today <b id="today">+$0</b></span>
+    <span id="worksnote" style="display:none"></span>
+    <span class="wagenote" id="wagenote"></span>
+  </div>
+
+  <div class="bankrow costrow" id="costrow">
+    <span>Stock used <b id="supplies">$0</b></span>
+    <span id="supplybreak"></span>
+    <span class="wagenote" id="laundrynote"></span>
+  </div>
+
+  <div class="rooms" id="rooms"></div>
+
+  <div class="book" id="book">
+    <span>Book: <b class="due">0</b> to arrive</span>
+    <span>&middot; <b class="free">0</b> ready</span>
+    <span class="over"></span>
+  </div>
+
+  <main>
+    <div class="jobshead"><span>Waiting on you</span></div>
+    <div class="jobs" id="jobs"></div>
+    <div class="crew" id="crew" style="display:none"></div>
+  </main>
+
+  <div class="controls">
+    <button class="ctl" id="hint">Urgent</button>
+    <button class="ctl" id="pricebtn">Rate</button>
+    <button class="ctl" id="staffbtn">Staff</button>
+    <button class="ctl" id="fnbbtn">F&amp;B</button>
+    <button class="ctl" id="buildbtn">Build</button>
+    <button class="ctl primary" id="pause">Pause</button>
+  </div>
+
+  <footer>
+    Only jobs nobody is covering appear above. Your staff handle theirs.
+    <br><a href="#" id="export">export playtest data</a>
+  </footer>
+</div>
+
+<div class="veil" id="end-veil">
+  <div class="card">
+    <h2 id="end-title">Shift over</h2>
+    <p id="end-sub"></p>
+    <div class="stats">
+      <div class="stat"><b id="end-profit">$0</b><span>profit</span></div>
+      <div class="stat"><b id="end-sat">0</b><span>guests</span></div>
+      <div class="stat"><b id="end-in">0</b><span>checked in</span></div>
+      <div class="stat"><b id="end-out">0</b><span>lost</span></div>
+    </div>
+    <p class="books" id="end-books"></p>
+    <div class="ratingbig" id="end-rating"></div>
+    <div class="revrow" id="end-reviews"></div>
+    <div class="hirebox" id="hirebox">
+      <h3 id="hire-title">Hire</h3>
+      <p id="hire-body"></p>
+    </div>
+    <button id="end-next">Next shift</button>
+    <button class="ghost" id="end-retry">Work it again</button>
+  </div>
+</div>
+
+<div class="veil" id="star-veil">
+  <div class="card">
+    <h2 id="star-title">1-star hotel</h2>
+    <p id="star-sub"></p>
+    <div class="sheet" id="star-sheet"></div>
+    <button class="ghost" id="star-close">Back</button>
+  </div>
+</div>
+
+<div class="veil" id="price-veil">
+  <div class="card">
+    <h2>Tonight's rate</h2>
+    <p id="price-sub"></p>
+    <div class="pricebig"><span>$</span><b id="price-val">0</b></div>
+    <input type="range" id="price-range" min="0" max="100" value="50" aria-label="Room rate">
+    <div class="pricehints">
+      <div><b id="price-demand">-</b><span>expected bookings</span></div>
+      <div><b id="price-expect">-</b><span>guest expectations</span></div>
+      <div><b id="price-tips">-</b><span>tipping</span></div>
+    </div>
+    <p class="roadmap" id="price-note"></p>
+    <div id="policy-box" style="display:none">
+      <div class="sectionhead">A better room than they booked</div>
+      <div class="modes" id="policy-modes"></div>
+      <p class="roadmap" id="policy-note"></p>
+    </div>
+    <button id="price-ok">Open at this rate</button>
+  </div>
+</div>
+
+<div class="veil" id="lvl-veil">
+  <div class="card">
+    <h2 id="lvl-title">Receptionist</h2>
+    <p id="lvl-sub"></p>
+    <div class="sheet" id="lvl-grid"></div>
+    <button class="ghost" id="lvl-close">Back</button>
+  </div>
+</div>
+
+<div class="veil" id="staff-veil">
+  <div class="card">
+    <h2>Your people</h2>
+    <p id="staff-sub"></p>
+    <div class="sheet" id="staff-sheet"></div>
+    <button class="ghost" id="staff-close">Back to the floor</button>
+  </div>
+</div>
+
+<div class="veil" id="build-veil">
+  <div class="card">
+    <h2 id="build-title">Build</h2>
+    <p id="build-sub"></p>
+    <div class="sheet" id="build-sheet"></div>
+    <button class="ghost" id="build-close">Back to the floor</button>
+  </div>
+</div>
+
+<div class="veil" id="report-veil">
+  <div class="card">
+    <h2>The books</h2>
+    <p id="report-sub"></p>
+    <div class="sheet" id="report-sheet"></div>
+    <button id="report-export">Export as JSON</button>
+    <button class="ghost" id="report-close">Back to the floor</button>
+  </div>
+</div>
+
+<div class="veil" id="book-veil">
+  <div class="card wide">
+    <h2>The book</h2>
+    <p id="book-sub"></p>
+    <div class="sheet" id="book-sheet"></div>
+    <button class="ghost" id="book-close">Back to the floor</button>
+  </div>
+</div>
+
+<div class="veil" id="rooms-veil">
+  <div class="card">
+    <h2>The building</h2>
+    <p id="rooms-sub"></p>
+    <div class="sheet" id="rooms-sheet"></div>
+    <button class="ghost" id="rooms-close">Back to the floor</button>
+  </div>
+</div>
+
+<div class="veil" id="fnb-veil">
+  <div class="card">
+    <h2>Food &amp; beverage</h2>
+    <p id="fnb-sub"></p>
+    <div class="sheet" id="fnb-sheet"></div>
+    <button class="ghost" id="fnb-close">Back to the floor</button>
+  </div>
+</div>
+
+<div class="veil" id="away-veil">
+  <div class="card">
+    <h2 id="away-title">While you were away</h2>
+    <p id="away-sub"></p>
+    <div class="stats" id="away-stats">
+      <div class="stat"><b id="away-earned">$0</b><span>earned</span></div>
+      <div class="stat"><b id="away-paid">0h</b><span>hours paid</span></div>
+      <div class="stat"><b id="away-factor">0%</b><span>of supervised</span></div>
+    </div>
+    <div class="sheet" id="away-sheet"></div>
+    <p class="roadmap" id="away-note"></p>
+    <button id="away-ok">Take over</button>
+  </div>
+</div>
+
+<div class="veil" id="tut-veil">
+  <div class="card">
+    <h2 id="tut-title">Your hotel. Your front desk.</h2>
+    <p id="tut-body"></p>
+    <button id="tut-go">Open up</button>
+  </div>
+</div>
+
+<div class="devbar" id="devbar">
+  <span class="tag">dev</span>
+  <button id="dev-finish">Finish all work</button>
+  <button id="dev-skip1">Skip 1h</button>
+  <button id="dev-skip8">Skip 8h</button>
+  <button id="dev-skip48">Skip 48h</button>
+  <button id="dev-cash">+$10k</button>
+  <button id="dev-days">Seed 5 days</button>
+  <button id="dev-endday">End day now</button>
+  <button id="dev-unlock">promote</button>
+  <button id="dev-wipe">Wipe save</button>
+</div>
+
+<div class="toast" id="toast"></div>
+<script type="module" src="./src/game.js"></script>
+</body>
+</html>
