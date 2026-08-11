@@ -1295,6 +1295,42 @@ export const CONTENT_STAGES = {
 };
 
 /**
+ * WHILE YOU ARE LEARNING A JOB, THE HOTEL GIVES YOU THAT JOB TO DO.
+ *
+ * Operator, playing the arc: "when i get to maintenance goal i need 3-4 days to
+ * complete it because there are not a lot of rooms needing a fix. This must be
+ * fixed for the tutorial. Maybe increase the rate of rooms breaking for the
+ * duration of the goal" - and on the one after it: "Its almost impossible to
+ * complete it because reception gets all calls from me. When we are on this
+ * goal only the player must be able to get calls for reservations."
+ *
+ * Both are the same shape: a gate counts work the player must do THEMSELVES,
+ * and the ordinary hotel does not supply enough of it - or supplies it to
+ * somebody else. So the day a gate is being worked on is tuned for teaching it,
+ * and goes back to normal the moment it is passed.
+ *
+ * KEYED BY THE GATE IN PROGRESS, not by the stage completed: a player at stage
+ * 3 is working toward gate 4, which is the three repairs.
+ *
+ * UNVERIFIED - breakChance 0.75 while learning maintenance. Method: the gate
+ * needs 3 repairs and a day turns roughly 4-5 rooms, so at 0.45 it lands a
+ * little under two a day and takes the 3-4 days the operator measured by
+ * playing. At 0.75 it is three a day and the gate closes inside one. It is
+ * deliberately higher than any rank's own rate because it is a lesson, not a
+ * hotel - and it stops the moment the lesson is over.
+ */
+export const LEARNING_DAY = {
+  // Working toward gate 4: three repairs. Things have to break to be fixed.
+  4: { breakChance: 0.75 },
+  /**
+   * Working toward gate 5: twelve calls. The desk must not answer them for you.
+   * `staffExcludes` already exists for exactly this - rank 5 uses it so that a
+   * player who IS the reservations desk gets their own calls.
+   */
+  5: { staffExcludes: [TASK.PHONE] },
+};
+
+/**
  * THE DAY ARC IS NOW A FLOOR, NOT A SCHEDULE.
  *
  * `game-designer`'s valve, and the reason this is safe to change at all. Gating
@@ -1935,6 +1971,18 @@ export function createShift(level, seed, options = {}) {
      * test - falls back to the day floor, which is the behaviour that shipped.
      */
     ...(stageConfig(effectiveStage(options.career, options.today ?? null)) ?? {}),
+    /**
+     * ...and the gate being worked on tunes the day for teaching it. See
+     * LEARNING_DAY. Applied after the stage bundle so it wins, and only while
+     * that gate is open - the day after it closes is an ordinary day again.
+     *
+     * KEYED TO WHAT THE PLAYER STILL NEEDS (`contentStage`), never to the
+     * day-floored `effectiveStage`. The backstop calls the arc complete from day
+     * 6 so nobody is starved of CONTENT, but the operator was on day 9 and still
+     * three repairs short - and keying the boost to the floor meant the help
+     * arrived for nobody who needed it.
+     */
+    ...(LEARNING_DAY[contentStage(options.career ?? {}) + 1] ?? {}),
     durationSec,
     dayStretch: stretch,
     walkInChance: base.walkInChance / stretch,
@@ -2815,7 +2863,27 @@ export function tick(shift, dt) {
     // A role the PLAYER has taken over is no longer covered by staff. Without
     // this, level 5's receptionist keeps answering the phone, the reservations
     // desk has nothing to do, and the shift passes itself untouched.
-    const excluded = next.config.staffExcludes || [];
+    const excluded = [...(next.config.staffExcludes || [])];
+    /**
+     * THE PHONE BELONGS TO RESERVATIONS WHEN THERE IS A RESERVATIONS DESK.
+     *
+     * Operator: "After completing the goal the reception must be able to get
+     * calls only if there is no staff working as reservation, later we will
+     * introduce shifts for the staff and with this it will be important to
+     * check if now on work is the reservation staff, if during this time there
+     * is no one reception can get calls too."
+     *
+     * So it is a question about who is ON, not about rank: reception covers the
+     * phone exactly when nobody whose job it is can. Asked per tick rather than
+     * baked into the config, which is what makes it survive the shift rota that
+     * is coming - a reservations clerk who is off, asleep or exhausted is not
+     * on the desk, and reception picks up.
+     */
+    if (person.role === ROLE.RECEPTION && !excluded.includes(TASK.PHONE)
+      && next.staff.some((other) => other.role === ROLE.RESERVATIONS
+        && !other.restedOut && other.energy >= ENERGY_FLOOR)) {
+      excluded.push(TASK.PHONE);
+    }
     const types = ROLE_TASKS[person.role].filter((t) => !excluded.includes(t));
     const waiting = next.tasks.find(
       (t) => types.includes(t.type) && t.doneAt === null && t.claimedBy === null

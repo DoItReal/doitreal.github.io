@@ -45,7 +45,7 @@ import {
 } from "./property.js";
 import {
   CONDITION_SPEC, FEATURE_SPEC, VIEW_SPEC, LEVELS, reveals, staffCap,
-  dayHours as dayHoursOf, hourAt as hourAtSchedule,
+  dayHours as dayHoursOf, hourAt as hourAtSchedule, daySeconds as daySecondsOf,
 } from "./domain/index.js";
 import { UPSELL_POLICY } from "./engine.js";
 import { inHouseAtOpen } from "./domain/Bookings.js";
@@ -2715,24 +2715,27 @@ function renderRoomsSheet() {
       who.className = "who";
       who.innerHTML = "<b></b><span></span>";
 
-      // The headline: what this room IS, as much of it as the rank reveals.
-      const title = [];
-      if (roomReveal("roomType")) title.push(room.spec.label);
+      /**
+       * WHAT THIS ROOM IS, ALWAYS. Operator: "improve the UI of the rooms... If
+       * the room is premium, standard, deluxe, 2 beds, 3 beds, apartment."
+       *
+       * The type and the condition used to sit behind `roomReveal`, and the
+       * condition was printed only when it was NOT standard - so most rows said
+       * nothing about the thing the player is choosing between. A receptionist
+       * allocating a room needs to know what it is every time, not once the rank
+       * says so. The VIEW stays gated: that is a genuine later mechanic.
+       */
+      const title = [`${CONDITION_SPEC[room.condition].label} ${room.spec.label.toLowerCase()}`];
       if (roomReveal("roomView")) title.push(`${VIEW_SPEC[room.view].label.toLowerCase()} view`);
-      who.querySelector("b").textContent = title.join(", ") || "Guest room";
+      who.querySelector("b").textContent = title.join(", ");
 
       // The line under it: capacity always - it is the thing that decides who
       // can sleep here and a receptionist needs it from day one - then condition
       // and features as they unlock.
-      const detail = [`sleeps ${room.capacity}`];
-      if (room.spareBedSlots > 0 && roomReveal("roomType")) {
-        detail.push(`+${room.spareBedSlots} extra bed${room.spareBedSlots === 1 ? "" : "s"}`);
-      }
-      // Condition is only worth a word when it is NOT standard - printing
-      // "standard" on nineteen rows out of twenty is noise, and it buries the
-      // one tired room that actually needs the player's money.
-      if (roomReveal("roomCondition") && room.condition !== "standard") {
-        detail.push(CONDITION_SPEC[room.condition].label.toLowerCase());
+      // Beds first, because it is the thing that decides who can sleep here.
+      const detail = [`${room.capacity} bed${room.capacity === 1 ? "" : "s"}`];
+      if (room.spareBedSlots > 0) {
+        detail.push(`+${room.spareBedSlots} extra`);
       }
       if (roomReveal("roomFeatures")) {
         for (const f of room.features) detail.push(FEATURE_SPEC[f].label.toLowerCase());
@@ -3869,21 +3872,50 @@ function devApply(label, mutate) {
   analytics.track("dev_tool", { action: label });
 }
 
+/**
+ * How many REAL seconds a given number of GAME hours is, walked day by day.
+ *
+ * THE BUG THIS FIXES, found testing the last one: "skip 48h" from day 1 landed
+ * on day 4, not day 3. Days are not the same length here - day 1 is 150 real
+ * seconds for 16 game hours, days 2 and 3 are 120 for 24, and a rank-1 day
+ * later is 600 - so a single seconds-per-hour taken from the CURRENT day drifts
+ * the moment the skip crosses midnight. Two days of skip bought three days of
+ * clock.
+ *
+ * So it consumes the rest of today at today's rate, then whole days at their
+ * own, then the remainder of the day it lands in. Same arithmetic the clock
+ * itself uses, applied once per day instead of once per skip.
+ */
+function realSecondsForGameHours(property, hours) {
+  const clock = clockOf(property);
+  const level = rankOf(property).level;
+  let left = hours;
+  let seconds = 0;
+  let day = clock.day;
+
+  // The rest of today, at today's rate.
+  const perHourToday = clock.dayLength / Math.max(1, dayHoursOf(day));
+  const hoursLeftToday = clock.secondsToDayEnd / Math.max(1e-6, perHourToday);
+  if (left <= hoursLeftToday) return left * perHourToday;
+  seconds += clock.secondsToDayEnd;
+  left -= hoursLeftToday;
+  day += 1;
+
+  // Then whole days, each at its own length, until the remainder fits in one.
+  for (let guard = 0; guard < 400 && left > 0; guard += 1) {
+    const length = daySecondsOf(level, day);
+    const hoursIn = Math.max(1, dayHoursOf(day));
+    if (left <= hoursIn) { seconds += left * (length / hoursIn); return seconds; }
+    seconds += length;
+    left -= hoursIn;
+    day += 1;
+  }
+  return seconds;
+}
+
 /** Skip time the honest way: rewind the clocks, then resume as normal. */
 function devSkip(hours) {
-  /**
-   * IN GAME HOURS, WHICH IS WHAT THE BUTTON SAYS. Operator: "skip 1h, 8h ...
-   * must be for game time, not real time."
-   *
-   * `devRewind` takes REAL seconds, and a real hour is not a game hour: day 1
-   * compresses sixteen game hours into 150 real seconds, so "skip 1h" was
-   * rewinding 3600 real seconds and throwing the player weeks down the
-   * timeline. One game hour is dayLength/dayHours real seconds - the same
-   * conversion Schedule.hourSeconds does, asked of the property's own clock.
-   */
-  const clock = clockOf(state.property);
-  const realSeconds = hours * (clock.dayLength / Math.max(1, dayHoursOf(clock.day)));
-  state.property = devRewind(state.property, realSeconds);
+  state.property = devRewind(state.property, realSecondsForGameHours(state.property, hours));
   saveProperty();
   const back = returnToProperty();
   render();

@@ -116,8 +116,18 @@
   .room b{display:block;font-size:12.5px;font-weight:700}
   .room span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
   .room.occupied{background:var(--panel2);border-color:#5a4f44}
-  .room.dirty{background:rgba(216,178,74,.13);border-color:var(--warn)}
-  .room.broken{background:rgba(207,106,95,.14);border-color:var(--bad)}
+  /* A dirty or broken room must be unmistakable at a glance on a phone - the
+     operator could not tell them apart. Colour alone is not enough (and fails
+     for a colour-blind player), so the state word goes bold in the same hue. */
+  .room.dirty{background:rgba(216,178,74,.18);border-color:var(--warn)}
+  .room.dirty span{color:var(--warn);font-weight:700}
+  .room.broken{background:rgba(207,106,95,.2);border-color:var(--bad)}
+  .room.broken span{color:var(--bad);font-weight:700}
+  .room.occupied span{color:var(--muted)}
+
+  /* The same three states, said in words, on the room sheet. */
+  .roomrow.dirty .door{color:var(--warn)}
+  .roomrow.broken .door{color:var(--bad)}
   .room.needsme{animation:needs 1.4s ease-in-out infinite}
   .room.needsme span{color:var(--gold);font-weight:700}
   @keyframes needs{0%,100%{box-shadow:0 0 0 0 rgba(200,168,106,.55)}50%{box-shadow:0 0 0 3px rgba(200,168,106,0)}}
