@@ -23,6 +23,7 @@ import {
   roomsAvailable, score, startTask, suggestTask, takeOver,
   taskBoard, taskSeconds, taskUrgency, tick,
   hourSeconds, WAIT_LADDER, addStaffToShift, openContentOnShift, effectiveStage,
+  callToCheckOut, dueOut, shiftDay,
 } from "./engine.js";
 import {
   BUILD_CATALOG, BUILD_KIND, OFFLINE_CAP_SECONDS, REFURB, ROOM as BUILD_ROOM,
@@ -44,7 +45,7 @@ import {
 } from "./property.js";
 import {
   CONDITION_SPEC, FEATURE_SPEC, VIEW_SPEC, LEVELS, reveals, staffCap,
-  dayHours as dayHoursOf,
+  dayHours as dayHoursOf, hourAt as hourAtSchedule,
 } from "./domain/index.js";
 import { UPSELL_POLICY } from "./engine.js";
 import { inHouseAtOpen } from "./domain/Bookings.js";
@@ -2739,6 +2740,48 @@ function renderRoomsSheet() {
       who.querySelector("span").textContent = detail.join(" - ");
       row.appendChild(who);
 
+      /**
+       * WHO IS IN IT RIGHT NOW, AND WHETHER THEY ARE LEAVING.
+       *
+       * Operator: "When a room does not free the room until 12:00 there must be
+       * a way to see it on the room view, and to call them from reception to
+       * check-out."
+       *
+       * The sheet was drawn purely from the PERSISTENT house, which carries the
+       * building and not the day - so a room the player could see was occupied
+       * on the floor strip looked empty here, and a departure that had not come
+       * down yet was invisible everywhere. The live shift is overlaid when a day
+       * is running.
+       */
+      const onFloor = state.shift && !state.shift.over
+        ? state.shift.rooms.find((r) => r.id === room.id) : null;
+      if (onFloor) {
+        const state_ = document.createElement("div");
+        state_.className = "who";
+        state_.innerHTML = "<b></b><span></span>";
+        const leaving = dueOut(state.shift, onFloor);
+        const label = leaving ? "Due out"
+          : onFloor.awaitingCheckout ? "At the desk"
+            : onFloor.state === ROOM.OCCUPIED ? "Occupied"
+              : onFloor.state === ROOM.DIRTY ? "Needs turning"
+                : onFloor.state === ROOM.BROKEN ? "Out of order" : "Ready";
+        state_.querySelector("b").textContent = label;
+        state_.querySelector("span").textContent = leaving
+          ? `by ${clockLabel(hourAtTime(state.shift, onFloor.checkoutAt))}`
+          : "";
+        row.appendChild(state_);
+
+        // The telephone, which is the desk's actual lever on a slow departure.
+        if (leaving) {
+          const call = document.createElement("button");
+          call.className = "ghost tiny";
+          call.dataset.call = String(room.id);
+          call.textContent = onFloor.calledDown ? "Called" : "Call room";
+          if (onFloor.calledDown) call.disabled = true;
+          row.appendChild(call);
+        }
+      }
+
       // What it is worth. Only once the player has something to do with the
       // information - before level 3 there is no allocation decision to make,
       // so a premium column would be noise.
@@ -2777,6 +2820,33 @@ function renderRoomsSheet() {
 el("rooms").addEventListener("click", () => {
   renderRoomsSheet();
   openPanel("rooms-veil");
+});
+
+/** The clock face at a given moment of the running day. */
+function hourAtTime(shift, at) {
+  return hourAtSchedule(shiftDay(shift), shift.config.durationSec, at,
+    shift.config.startHour ?? null);
+}
+function clockLabel(hour) {
+  const hh = Math.floor(hour);
+  const mm = Math.round((hour - hh) * 60);
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+/**
+ * CALL THE ROOM. Delegated onto the sheet, which is never replaced, rather than
+ * bound per row - the rows are rebuilt every time the sheet opens.
+ */
+el("rooms-sheet").addEventListener("click", (event) => {
+  const node = event.target.closest("[data-call]");
+  if (!node || !state.shift || state.shift.over) return;
+  const roomId = Number(node.dataset.call);
+  state.shift = callToCheckOut(state.shift, roomId);
+  sound.bell();
+  toast("Called the room - they are coming down.");
+  analytics.track("call_to_checkout", { room: roomId });
+  renderRoomsSheet();
+  render();
 });
 
 el("rooms-close").addEventListener("click", () => {

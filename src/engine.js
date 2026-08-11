@@ -829,8 +829,28 @@ export const RESERVATION_JUDGEMENT = { 1: 0.45, 2: 0.75, 3: 0.95 };
  * would be far too expensive on a phone. It produces the same behaviour in the
  * common case and it is deliberately described here as what it is.
  */
+/**
+ * NO DESK EVER OVERSELLS. Operator: "For the check-ins until we get reservation
+ * manager role, it must not overbook the hotel, no matter what. Now the
+ * reception gets reservations even when the hotel is full or we have 2 free
+ * rooms but expect 2 bookings and no check-out."
+ *
+ * Tier 1 used to check ONLY the arrival night (`span: false`), so a plain
+ * receptionist could take a four-night booking into a house that was full from
+ * tomorrow - and the player found out days later with nowhere to put them.
+ * Every tier now spans the whole stay. Selling a bed that does not exist is not
+ * a skill difference; it is a mistake the game should not be able to make on
+ * the player's behalf.
+ *
+ * What still separates the tiers is JUDGEMENT: how much room a desk keeps in
+ * hand. A better desk holds one back for the walk-in who pays more, which is
+ * the beginning of yield management and the thing the reservations manager is
+ * actually for. The operator's own framing: late check-outs and the rest are
+ * "mainly in the role of the reservation manager and this is a lot bigger
+ * implementation" - so this is deliberately the small, safe half.
+ */
 export const DESK_TIER = {
-  1: { span: false, buffer: 0, label: "checks the arrival night" },
+  1: { span: true, buffer: 0, label: "will not oversell a single night" },
   2: { span: true, buffer: 0, label: "checks the whole stay" },
   3: { span: true, buffer: 1, label: "checks the stay and keeps a room back" },
 };
@@ -1604,6 +1624,44 @@ export function openContentOnShift(shift, stage) {
     next.nextPhoneAt = next.time + 8 * (config.dayStretch ?? 1);
   }
   return next;
+}
+
+/**
+ * RING THE ROOM AND ASK THEM TO COME DOWN.
+ *
+ * Operator: "When a room does not free the room until 12:00 there must be a way
+ * to see it on the room view, and to call them from reception to check-out."
+ *
+ * A guest with a departure today sits in an OCCUPIED room until `checkoutAt` -
+ * their own time, somewhere before noon - and until then the room cannot be
+ * turned or resold and there is nothing on the board about it. The desk's real
+ * lever is the telephone: call the room, and they come down now.
+ *
+ * It only ever moves a departure FORWARD, and only for a guest who is already
+ * leaving today. It cannot invent a check-out, and it cannot be used on a guest
+ * staying another night - that would be throwing a paying guest out, which is a
+ * different thing entirely and not one the front desk does.
+ *
+ * Late check-out - the other direction, and the one that earns money - is
+ * deliberately not here. The operator: "We will implement later late-check-outs
+ * but this is mainly in the role of the reservation manager and this is a lot
+ * bigger implementation."
+ *
+ * Returns a NEW shift.
+ */
+export function callToCheckOut(shift, roomId, at = null) {
+  const room = shift.rooms.find((r) => r.id === roomId);
+  if (!room || room.state !== ROOM.OCCUPIED || !room.inHouse) return shift;
+  if (room.checkoutAt === null || room.checkoutAt <= shift.time) return shift;
+  const rooms = shift.rooms.map((r) => (r.id === roomId
+    ? { ...r, checkoutAt: at ?? shift.time, calledDown: true } : r));
+  return { ...shift, rooms };
+}
+
+/** Is this room holding a departure that has not come down yet? */
+export function dueOut(shift, room) {
+  return room.state === ROOM.OCCUPIED && room.inHouse
+    && room.checkoutAt !== null && room.checkoutAt > shift.time;
 }
 
 export function addStaffToShift(shift, { role, tier = 1 }) {
@@ -2588,8 +2646,23 @@ function completeTask(shift, task, worker) {
     const tier = !onDesk ? null
       : worker.role === ROLE.RESERVATIONS ? worker.tier : 1;
 
-    const verdict = tier === null ? { accept: true, reason: "player" }
-      : judgeEnquiry(shift, enquiry, tier);
+    /**
+     * THE PLAYER IS JUDGED TOO. Operator: "until we get reservation manager
+     * role, it must not overbook the hotel, no matter what."
+     *
+     * This used to accept unconditionally whenever the PLAYER took the call -
+     * the reasoning being that they can see the book and the consequence is
+     * theirs. In practice the book is two taps away behind a sheet, the call
+     * expires in fourteen seconds, and what the player actually experienced was
+     * the hotel selling rooms it did not have. A desk that cannot count is not
+     * a decision; it is a trap.
+     *
+     * So an unstaffed desk answers on tier 1 - spans the whole stay, keeps
+     * nothing back. The player may still choose NOT to answer, which is the
+     * real decision, and the reservations manager still earns their keep by
+     * holding rooms back rather than by being the only one who can count.
+     */
+    const verdict = judgeEnquiry(shift, enquiry, tier ?? 1);
 
     if (!verdict.accept) {
       shift.bookingsDeclined += 1;
