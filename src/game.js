@@ -280,6 +280,7 @@ function toast(message, ms = 1700) {
 const PANELS = [
   "star-veil", "build-veil", "rooms-veil", "book-veil", "report-veil",
   "fnb-veil", "price-veil", "lvl-veil", "staff-veil", "unlock-veil", "goal-veil",
+  "money-veil",
 ];
 
 /** What `paused` was before the first panel opened, or null if none is open. */
@@ -952,9 +953,13 @@ const GATE_DOING = {
 };
 
 function paintGoal() {
-  const label = el("goalrank");
-  const need = el("goalneed");
-  const bar = el("goalbar");
+  /**
+   * THE RING IS THE GOAL LINE NOW. The three elements this used to write -
+   * goalrank, goalneed, goalbar - were a strip of their own on the floor, and
+   * the status line plus the sheet behind the ring replaced all of it. Writing
+   * to markup that no longer exists is how a paint throws and takes the frame
+   * loop with it, so they are gone from here rather than left hidden.
+   */
 
   /**
    * THE GOAL LINE IS THE CONTENT LADDER, AND NOTHING ELSE.
@@ -983,18 +988,12 @@ function paintGoal() {
    */
   const gate = nextContentGate(state.property.career);
   if (!gate) {
-    label.textContent = "Every job is open";
-    need.textContent = "the whole floor is yours - hire whoever you want to stop doing it yourself";
-    bar.style.width = "100%";
     paintGoalRing(null, 1);
     return;
   }
 
   const have = Math.max(0, state.property.career[gate.counter] ?? 0);
   const share = Math.max(0, Math.min(1, have / gate.need));
-  label.textContent = `Unlock ${gate.opens}`;
-  need.textContent = `${gate.need - have} more to ${GATE_DOING[gate.counter] ?? gate.counter}`;
-  bar.style.width = `${share * 100}%`;
   paintGoalRing(gate, share);
 }
 
@@ -1050,7 +1049,7 @@ function paintRestDay() {
    * same mistake the goal line was carrying. What a rank means to the player is
    * how much hotel they may run, so that is what it says.
    */
-  el("role").textContent = `Owner - rank ${rankOf(state.property).level}`;
+  // The owner has no job title - the status line carries the RANK. See lvlnum.
   el("lvlnum").textContent = String(rankOf(state.property).level);
   el("bank").textContent = `$${state.property.bank}`;
   el("ratingnow").textContent = rating().toFixed(1);
@@ -1059,7 +1058,13 @@ function paintRestDay() {
   paintGoal();
 
   el("money").textContent = "-";
-  el("money2").textContent = `$${state.property.cash ?? 0}`;
+  /**
+   * ALL OF IT, not just the till. Operator: "Rework the money to not show cash
+   * only but all money the player has." `spendable` is the same total every
+   * purchase in the game is checked against - notes plus bank - so the number on
+   * screen is now the number that decides whether you can afford a thing.
+   */
+  el("money2").textContent = `$${spendable(state.property)}`;
   el("bank").textContent = `$${state.property.bank}`;
   el("today").textContent = "--";
   el("today").classList.remove("neg");
@@ -1117,7 +1122,7 @@ function paint() {
   el("lvlnum").textContent = String(rankOf(state.property).level);
   el("daytime").textContent = "rank";
   // See the note in paintRestDay: a rank, never a job title.
-  el("role").textContent = `Owner - rank ${rankOf(state.property).level}`;
+  // The owner has no job title - the status line carries the RANK. See lvlnum.
   el("lvlnum").textContent = String(rankOf(state.property).level);
   paintStars(result.stars);
   el("hotelclass").textContent = `${result.stars}-star`;
@@ -1137,7 +1142,13 @@ function paint() {
    */
   const outgoings = result.wages + result.supplies + result.facilityCosts;
   el("money").textContent = `$${result.takings + result.facilityRevenue}`;
-  el("money2").textContent = `$${state.property.cash ?? 0}`;
+  /**
+   * ALL OF IT, not just the till. Operator: "Rework the money to not show cash
+   * only but all money the player has." `spendable` is the same total every
+   * purchase in the game is checked against - notes plus bank - so the number on
+   * screen is now the number that decides whether you can afford a thing.
+   */
+  el("money2").textContent = `$${spendable(state.property)}`;
   el("bank").textContent = `$${state.property.bank}`;
   const today = result.profit;
   el("today").textContent = `${today < 0 ? "-" : "+"}$${Math.abs(today)}`;
@@ -1177,9 +1188,8 @@ function paint() {
       ? `own laundry saved $${result.laundrySwing}`
       : `a laundry would save $${result.laundrySwing}`;
   el("sat").textContent = String(result.satisfaction);
-  el("sbar").style.width = `${shift.satisfaction}%`;
-  el("smark").style.left = `${config.targetSatisfaction}%`;
-  el("sbar").classList.toggle("short", shift.satisfaction < config.targetSatisfaction);
+  // Satisfaction reads as a number in the status line; the bar and its target
+  // mark went with the meters strip.
 
   // The floor, with who is on each room. "YOU" marks a room nobody is covering.
   const rooms = el("rooms");
@@ -2215,6 +2225,51 @@ el("goalbtn").addEventListener("click", () => {
 });
 el("goal-close").addEventListener("click", () => closePanel("goal-veil"));
 
+/**
+ * WHERE THE MONEY IS. Operator: "clicking on it to open additional info."
+ *
+ * The floor used to carry three strips for this - a cash/bank/today row, a
+ * stock row and a money meter - all competing with the job list for a phone
+ * screen. They are all in here now, opened when the player asks.
+ */
+function renderMoneySheet() {
+  const p = state.property;
+  const cash = p.cash ?? 0;
+  const bank = p.bank ?? 0;
+  el("money-sub").textContent = `$${cash + bank} in total`;
+
+  const sheet = el("money-sheet");
+  sheet.innerHTML = "";
+  const line = (what, amount, note) => {
+    const row = document.createElement("div");
+    row.className = "lvlrow";
+    const what_ = document.createElement("div");
+    what_.className = "what";
+    const b = document.createElement("b");
+    b.textContent = what;
+    const span = document.createElement("span");
+    span.textContent = note;
+    what_.appendChild(b);
+    what_.appendChild(span);
+    row.appendChild(what_);
+    const value = document.createElement("b");
+    value.textContent = amount;
+    row.appendChild(value);
+    sheet.appendChild(row);
+  };
+
+  line("In the till", `$${cash}`, "notes guests have handed over today");
+  line("In the bank", `$${bank}`, "settled takings - what a contractor is paid from");
+  const wages = (p.roster ?? []).reduce((sum, person) => sum + (person.wage ?? 0), 0);
+  if (wages > 0) line("Wages a day", `-$${wages}`, `${p.roster.length} on the payroll`);
+}
+
+el("moneybtn").addEventListener("click", () => {
+  renderMoneySheet();
+  openPanel("money-veil");
+});
+el("money-close").addEventListener("click", () => closePanel("money-veil"));
+
 /* --------------------------------------------------------------- build -- */
 /**
  * The build screen. Same discipline as the jobs list and for the same reason:
@@ -2812,7 +2867,6 @@ function renderBookSheet() {
   for (const row of calendar.occupancyGrid(rooms, today, BOOK_DAYS)) {
     const label = document.createElement("div");
     label.className = "gcell glabel";
-    label.textContent = String(row.room.number);
     grid.appendChild(label);
     for (const cell of row.cells) {
       const node = document.createElement("div");

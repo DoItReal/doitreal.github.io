@@ -406,8 +406,13 @@
       <i id="goalnum">1</i>
     </button>
 
+    <button class="stat" id="starbtn" aria-label="Hotel class">
+      <b><span id="starrow" class="starrow"></span></b><span id="hotelclass">1-star</span>
+    </button>
     <div class="stat"><b id="ratingnow">3.5</b><span>rating</span></div>
-    <div class="stat"><b id="money2">$0</b><span>cash</span></div>
+    <button class="stat" id="moneybtn" aria-label="Your money">
+      <b id="money2">$0</b><span>money</span>
+    </button>
     <div class="stat"><b id="sat">70</b><span>happy</span></div>
     <div class="stat wide"><b id="clock">Day 1, 08:00</b><span id="daytime">&nbsp;</span></div>
     <button class="iconbtn" id="speed" aria-label="Playback speed">1x</button>
@@ -425,40 +430,6 @@
 
   <!-- Kept, but off the critical path: the hotel's class and the meters the
        balance screens still read. -->
-  <button class="ident" id="starbtn">
-    <div class="hotelname"><span id="starrow" class="starrow"></span><em id="hotelclass">1-star</em></div>
-    <div class="rolerow"><b id="role">Owner</b> &middot; <span id="goalneed"></span></div>
-  </button>
-
-  <div class="meters" hidden>
-    <div class="meter">
-      <div class="top"><b id="money">$0</b><span id="mgoal">rev $0  exp $0</span></div>
-      <div class="bar"><span id="mbar" style="width:0%"></span></div>
-    </div>
-    <div class="meter">
-      <div class="bar"><span id="sbar" style="width:70%"></span><em id="smark" style="left:78%"></em></div>
-    </div>
-  </div>
-
-  <div class="goalrow" id="goalrow" hidden>
-    <div class="top"><b id="goalrank">Goal</b></div>
-    <div class="bar"><span id="goalbar" style="width:0%"></span></div>
-  </div>
-
-  <div class="bankrow">
-    <span class="purse">Cash <b id="money2">$0</b></span>
-    <span class="bankbtn">Bank <b id="bank">$0</b></span>
-    <span class="bankbtn">Today <b id="today">+$0</b></span>
-    <span id="worksnote" style="display:none"></span>
-    <span class="wagenote" id="wagenote"></span>
-  </div>
-
-  <div class="bankrow costrow" id="costrow">
-    <span>Stock used <b id="supplies">$0</b></span>
-    <span id="supplybreak"></span>
-    <span class="wagenote" id="laundrynote"></span>
-  </div>
-
   <div class="rooms" id="rooms"></div>
 
   <div class="book" id="book">
@@ -468,24 +439,57 @@
   </div>
 
   <main>
-    <div class="jobshead"><span>Waiting on you</span></div>
+    <div class="jobshead"><span>Waiting on you</span><span id="wagenote" class="wagenote"></span></div>
     <div class="jobs" id="jobs"></div>
     <div class="crew" id="crew" style="display:none"></div>
   </main>
 
-  <div class="controls">
-    <button class="ctl" id="hint">Urgent</button>
-    <button class="ctl" id="pricebtn">Rate</button>
-    <button class="ctl" id="staffbtn">Staff</button>
-    <button class="ctl" id="fnbbtn">F&amp;B</button>
-    <button class="ctl" id="buildbtn">Build</button>
-    <button class="ctl primary" id="pause">Pause</button>
-  </div>
+  <!--
+    EVERYTHING BELOW WAS A SECOND COPY OF SOMETHING ABOVE, and the duplicate
+    `.controls` was the worst of it: the menu was declared TWICE, so every one
+    of its ids existed twice. `getElementById` returns the first, so the top row
+    worked and the bottom row was dead markup the player could still see and
+    tap. The operator: "now i have duplicate of the menu at the bottom. I want
+    it only on the top... Remove all duplicates menus, info we have."
 
+    The stat line owns all of it now - rank, stars, goal, rating, money,
+    satisfaction, the clock - so these are gone rather than hidden. What the
+    balance screens still read (the money meter, the cost row) moved into the
+    money sheet, which is where a breakdown belongs.
+  -->
   <footer>
     Only jobs nobody is covering appear above. Your staff handle theirs.
     <br><a href="#" id="export">export playtest data</a>
   </footer>
+</div>
+
+<!-- WHAT THE MONEY IS MADE OF. Operator: "Rework the money to not show cash
+     only but all money the player has. And clicking on it to open additional
+     info." The top line shows the total; this is the breakdown behind it. -->
+<div class="veil" id="money-veil">
+  <div class="card">
+    <h2>Your money</h2>
+    <p class="roadmap" id="money-sub"></p>
+    <div class="sheet" id="money-sheet"></div>
+    <!-- The readouts the floor used to carry in three separate rows. They live
+         here now: one place, opened when the player asks, instead of three
+         strips competing with the job list for a phone screen. -->
+    <div class="bankrow">
+      <span class="bankbtn">Bank <b id="bank">$0</b></span>
+      <span class="bankbtn">Today <b id="today">+$0</b></span>
+      <span id="worksnote" style="display:none"></span>
+    </div>
+    <div class="bankrow costrow" id="costrow">
+      <span>Stock used <b id="supplies">$0</b></span>
+      <span id="supplybreak"></span>
+      <span class="wagenote" id="laundrynote"></span>
+    </div>
+    <div class="meter">
+      <div class="top"><b id="money">$0</b><span id="mgoal">rev $0  exp $0</span></div>
+      <div class="bar"><span id="mbar" style="width:0%"></span></div>
+    </div>
+    <button class="ghost" id="money-close">Back</button>
+  </div>
 </div>
 
 <div class="veil" id="end-veil">
