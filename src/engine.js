@@ -2020,6 +2020,21 @@ export function createShift(level, seed, options = {}) {
     roomRate, fairRate: fair, expectation, demand,
     reviews: [],
     incomingRating: rating,
+    /**
+     * THE STAGE THIS DAY OPENED AT.
+     *
+     * THE BUG THIS FIXES, from the operator: "when i do some from the previous
+     * goals i still get the popup for the already finished goal... I am not sure
+     * this is about completing the job or appears based on time."
+     *
+     * It was per-DAY, which is why it felt like time. `openContentOnShift` sets
+     * this when an unlock lands mid-shift, but `createShift` never did - so
+     * every new day began at stage 0 however far along the player was, and the
+     * first frame of the day saw "stage 2 > 0" and announced the unlock again.
+     * Recording it here means a day that OPENS at stage 2 has nothing to
+     * announce, which is the truth.
+     */
+    arcStage: effectiveStage(options.career, options.today ?? null),
     time: 0, over: false,
     rngState: Math.floor(random() * 4294967296),
     nextId: 1000,

@@ -31,7 +31,7 @@ import {
   REMOTE_TRAINING_MULTIPLIER, TRAINING, availableRoster, devFinishAll, devGrant, devRewind,
   devSeedDays, hire, hireBlocker, lockedDepartments, menuBand, menuPrice, openPositions,
   recordWork, unlockProgress, nextDepartment, unlockShare, DEPARTMENT_GOALS, nextContentGate,
-  UNLOCK_NOTES, HIRE_NOTES, contentStage,
+  UNLOCK_NOTES, HIRE_NOTES, contentStage, CONTENT_GATES, HIRE_STAGE, ROLE_PERSON,
   recruitmentFee, withRank,
   setMenuPrice, staffCount,
   findStaff, maintenanceSpeedUpSeconds, open as openProperty, resume, roomsUnderConstruction,
@@ -279,7 +279,7 @@ function toast(message, ms = 1700) {
  */
 const PANELS = [
   "star-veil", "build-veil", "rooms-veil", "book-veil", "report-veil",
-  "fnb-veil", "price-veil", "lvl-veil", "staff-veil", "unlock-veil",
+  "fnb-veil", "price-veil", "lvl-veil", "staff-veil", "unlock-veil", "goal-veil",
 ];
 
 /** What `paused` was before the first panel opened, or null if none is open. */
@@ -598,7 +598,11 @@ function syncCareer() {
        * able to connect what they did to what they got.
        */
       const note = UNLOCK_NOTES[stage];
-      if (note && note.work) announce("Unlocked", note.work);
+      if (note && note.work && !announcedStages.has(String(stage))) {
+        announcedStages.add(String(stage));
+        localStorage.setItem(KEY_STAGES_SEEN, [...announcedStages].join(","));
+        announce("Unlocked", note.work);
+      }
     }
   }
 
@@ -982,13 +986,34 @@ function paintGoal() {
     label.textContent = "Every job is open";
     need.textContent = "the whole floor is yours - hire whoever you want to stop doing it yourself";
     bar.style.width = "100%";
+    paintGoalRing(null, 1);
     return;
   }
 
   const have = Math.max(0, state.property.career[gate.counter] ?? 0);
+  const share = Math.max(0, Math.min(1, have / gate.need));
   label.textContent = `Unlock ${gate.opens}`;
   need.textContent = `${gate.need - have} more to ${GATE_DOING[gate.counter] ?? gate.counter}`;
-  bar.style.width = `${Math.max(0, Math.min(100, (have / gate.need) * 100))}%`;
+  bar.style.width = `${share * 100}%`;
+  paintGoalRing(gate, share);
+}
+
+/**
+ * THE GOAL AS A RING, which is the whole of it the player sees at a glance.
+ *
+ * Operator: "the current goal + progress circle (it can be goal by number, and
+ * when clickin on it to appears a popup with additional info)". So the number is
+ * WHICH goal you are on and the ring is how far through it you are; everything
+ * else moves into the sheet behind it.
+ *
+ * The dash offset is the circumference (2 * PI * 15.5 = 97.4) wound back by the
+ * share done, which is why the stylesheet carries that number too.
+ */
+const RING = 97.4;
+function paintGoalRing(gate, share) {
+  el("goalnum").textContent = gate ? String(gate.stage) : "*";
+  el("goalring").style.strokeDashoffset = String(RING * (1 - Math.max(0, Math.min(1, share))));
+  el("goalbtn").classList.toggle("done", !gate);
 }
 
 function displayClock() {
@@ -1026,6 +1051,7 @@ function paintRestDay() {
    * how much hotel they may run, so that is what it says.
    */
   el("role").textContent = `Owner - rank ${rankOf(state.property).level}`;
+  el("lvlnum").textContent = String(rankOf(state.property).level);
   el("bank").textContent = `$${state.property.bank}`;
   el("ratingnow").textContent = rating().toFixed(1);
   paintStars(certification(state.property).stars);
@@ -1092,6 +1118,7 @@ function paint() {
   el("daytime").textContent = "rank";
   // See the note in paintRestDay: a rank, never a job title.
   el("role").textContent = `Owner - rank ${rankOf(state.property).level}`;
+  el("lvlnum").textContent = String(rankOf(state.property).level);
   paintStars(result.stars);
   el("hotelclass").textContent = `${result.stars}-star`;
   el("ratingnow").textContent = rating().toFixed(1);
@@ -2124,6 +2151,69 @@ el("starbtn").addEventListener("click", () => {
 });
 el("star-close").addEventListener("click", () => closePanel("star-veil"));
 el("unlock-ok").addEventListener("click", () => closePanel("unlock-veil"));
+
+/**
+ * THE WHOLE LADDER: what is done, what you are on, what is coming, and what
+ * each one hands over. Operator asked for exactly this behind the goal ring.
+ *
+ * Built from the same two tables the game runs on - CONTENT_GATES for the work
+ * and HIRE_NOTES for the person you may then pay to do it - so a goal cannot be
+ * described here differently from how it behaves.
+ */
+function renderGoalSheet() {
+  const career = state.property.career;
+  const at = contentStage(career);
+  const sheet = el("goal-sheet");
+  sheet.innerHTML = "";
+
+  el("goal-sub").textContent = at >= CONTENT_GATES.length
+    ? "Every job in the hotel is open to you."
+    : `Goal ${at + 1} of ${CONTENT_GATES.length}`;
+
+  const hireBy = {};
+  for (const [role, stage] of Object.entries(HIRE_STAGE)) hireBy[stage] = role;
+
+  for (const gate of CONTENT_GATES) {
+    const have = Math.max(0, career[gate.counter] ?? 0);
+    const done = at >= gate.stage;
+    const current = !done && at + 1 === gate.stage;
+
+    const row = document.createElement("div");
+    row.className = `lvlrow${current ? " current" : ""}${done || current ? "" : " locked"}`;
+
+    const mark = document.createElement("i");
+    mark.textContent = done ? "OK" : String(gate.stage);
+    row.appendChild(mark);
+
+    const what = document.createElement("div");
+    what.className = "what";
+    const title = document.createElement("b");
+    title.textContent = `Unlock ${gate.opens}`;
+    const sub = document.createElement("span");
+    /**
+     * FUTURE GOALS SAY WHAT THEY WANT, not how far off they are. A locked goal
+     * showing "0/4 turn rooms" reads as progress the player has failed to make,
+     * when in truth they have not been allowed to start it yet.
+     */
+    const hire = hireBy[gate.stage];
+    const opens = hire ? ` - and lets you hire a ${ROLE_PERSON[hire] ?? hire}` : "";
+    sub.textContent = done
+      ? `Done${opens}`
+      : current
+        ? `${Math.max(0, gate.need - have)} more to ${GATE_DOING[gate.counter] ?? gate.counter}${opens}`
+        : `${gate.need} to ${GATE_DOING[gate.counter] ?? gate.counter}${opens}`;
+    what.appendChild(title);
+    what.appendChild(sub);
+    row.appendChild(what);
+    sheet.appendChild(row);
+  }
+}
+
+el("goalbtn").addEventListener("click", () => {
+  renderGoalSheet();
+  openPanel("goal-veil");
+});
+el("goal-close").addEventListener("click", () => closePanel("goal-veil"));
 
 /* --------------------------------------------------------------- build -- */
 /**
@@ -3546,6 +3636,17 @@ let introBeat = 0;
 const KEY_HIRES_SEEN = "hc_hires_announced";
 const announcedHires = new Set(
   (localStorage.getItem(KEY_HIRES_SEEN) || "").split(",").filter(Boolean),
+);
+
+/**
+ * Stages already announced, PERSISTED for the same reason the hires are: the
+ * news is told once, not once per day and not again after a reload. The shift
+ * carries `arcStage` so it knows what it opened at, but a shift is a day and
+ * this has to outlive one.
+ */
+const KEY_STAGES_SEEN = "hc_stages_announced";
+const announcedStages = new Set(
+  (localStorage.getItem(KEY_STAGES_SEEN) || "").split(",").filter(Boolean),
 );
 
 /**

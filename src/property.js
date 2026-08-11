@@ -53,7 +53,7 @@ import {
 import {
   DEPARTMENT_GOALS, emptyCareer, isUnlocked, nextDepartment, unlockProgress, unlockShare,
   CONTENT_GATES, contentStage, nextContentGate, UNLOCK_NOTES, HIRE_NOTES,
-  HIRE_STAGE, hireUnlocked, hireGap,
+  HIRE_STAGE, hireUnlocked, hireGap, ROLE_PERSON,
 } from "./domain/Unlocks.js";
 
 /* ------------------------------------------------------------- building -- */
@@ -484,7 +484,7 @@ export function openPositions(property) {
 /** Re-exported so callers have one import for "what opens a department". */
 export { DEPARTMENT_GOALS, unlockProgress, isUnlocked, nextDepartment, unlockShare };
 export { CONTENT_GATES, contentStage, nextContentGate, UNLOCK_NOTES, HIRE_NOTES };
-export { HIRE_STAGE, hireUnlocked, hireGap };
+export { HIRE_STAGE, hireUnlocked, hireGap, ROLE_PERSON };
 
 /**
  * Bank experience and the jobs behind it, as they happen. Returns a NEW property.

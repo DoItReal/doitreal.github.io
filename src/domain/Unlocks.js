@@ -227,6 +227,19 @@ export const GATE_DOING = {
   calls: "take bookings on the phone",
 };
 
+/**
+ * A DEPARTMENT AS A PERSON. "hire a reception" and "hire a housekeeping" are
+ * not things anybody says - the role key is a department, and the player hires
+ * a human out of it.
+ */
+export const ROLE_PERSON = {
+  reception: "receptionist",
+  bellboy: "bellboy",
+  housekeeping: "housekeeper",
+  maintenance: "maintenance engineer",
+  reservations: "reservations manager",
+};
+
 /** What HIRING a department opens, once its work is learned. */
 export const HIRE_NOTES = {
   reception: "You can hire a receptionist now - they hold the desk while you are away.",
